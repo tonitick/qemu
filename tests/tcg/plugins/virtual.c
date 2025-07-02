@@ -23,6 +23,7 @@ int isdigit(int c);
 #include <string.h>
 #include <ctype.h>
 #include "virtual.h"
+#include "json_parse.h"
 
 #define MAX_ENTRIES 1024
 #define MAX_LINE_LEN 128
@@ -457,6 +458,7 @@ static void updatepc(unsigned int cpu_index, void *udata);
 static void updatereg(unsigned int cpu_index, void *udata);
 static void updatemem(unsigned int cpu_index, void *udata);
 static void randstate(unsigned int cpu_index, void *udata);
+static void randargs(unsigned int cpu_index, void *udata);
 static void dumplogger(unsigned int cpu_index, void *udata);
 static void dyninst(unsigned int cpu_index, void *udata);
 static void dyninst_lib(unsigned int cpu_index, void *udata);
@@ -466,6 +468,7 @@ cb_entry_t cb_registry[] = {
 	{ "updatereg", updatereg},
 	{ "updatemem", updatemem},
 	{ "randstate", randstate},
+    { "randargs", randargs },
     { "raiseirq", raiseirq },
 	{ "dumplog", dumplogger},
 	{ "dyninst", dyninst},
@@ -722,6 +725,65 @@ static void randstate(unsigned int cpu_index, void *udata) {
     }
 
 }
+
+float get_random_float(float min, float max);
+float get_random_float(float min, float max) {
+    // Generate a random float in the range [min, max]
+    unsigned int random_word = get_random_word();
+    return min + (random_word / (float)UINT32_MAX) * (max - min);
+}
+
+static void randargs(unsigned int cpu_index, void *udata) {
+    // iterate arg_settings
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *setting = &arg_settings[i];
+        // use range to generate random value
+        ValueUnion value;
+        if (setting->vtype == TYPE_FLOAT) {
+            // assert(setting->value_count == 2);
+            if (setting->value_count == 1) {
+                value.f = setting->value_range[0].f;
+            }
+            else if (setting->value_count == 2) {
+                // Generate a random float in the range
+                value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
+            } else {
+                fprintf(stderr, "Invalid value count for float type in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
+            }
+        } else if (setting->vtype == TYPE_UINT32) {
+            if (setting->value_count == 1) {
+                value.u32 = setting->value_range[0].u32;
+            }
+            else if (setting->value_count == 2) {
+                // Generate a random uint32 in the range
+                value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+            } else {
+                fprintf(stderr, "Invalid value count for uint32 type in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            fprintf(stderr, "Unsupported value type in setting '%s'\n", setting->name);
+            perror("randargs");
+            exit(EXIT_FAILURE);
+        }
+
+        if (setting->location_type == TYPE_REG) {
+            printf("randargs - setting register %s to value: %u\n", setting->reg, value.u32);
+            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
+        } else if (setting->location_type == TYPE_ADDR) {
+            printf("randargs - writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+            qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+        } else {
+            fprintf(stderr, "Unsupported location type in setting '%s'\n", setting->name);
+            perror("randargs");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
 static void updatepc(unsigned int cpu_index, void *udata)
 {
 	// BUGON: This wont' work anymore
@@ -732,8 +794,9 @@ static void updatepc(unsigned int cpu_index, void *udata)
 
 static void updatereg(unsigned int cpu_index, void *udata)
 {
-    uint32_t val = 0xdeadbeef;
-    qemu_plugin_set_register((uint8_t *)&val, 1);
+    ValueUnion vn;
+    vn.f = 6.28;
+    qemu_plugin_set_register((uint8_t *)&vn, 26); //  26 is s0
 }
 
 
@@ -952,7 +1015,8 @@ void parse_rules_file(const char *filename) {
         rules[rules_count].func = cb;
 
         if (n == 3) {
-            strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args) - 1);
+            // strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args) - 1);
+            strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args));
             rules[rules_count].args[sizeof(rules[rules_count].args) - 1] = '\0';
         } else {
             rules[rules_count].args[0] = '\0';
@@ -963,6 +1027,23 @@ void parse_rules_file(const char *filename) {
 
     fclose(f);
 }
+
+void parse_json_args(const char *filename);
+void parse_json_args(const char *filename)
+{
+    char *json = read_json_file(filename);
+    if (!json) {
+        perror("read_json_file failed");
+        return;
+    }
+
+    parse_arg_settings(json);
+
+    free(json);
+
+    dump_arg_settings();
+}
+
 #if 0
 static void print_rules(void) {
     printf("Parsed %zu rules:\n", rules_count);
@@ -1006,6 +1087,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 	filename = get_arg("virtual", argc, argv);
 	parse_rules_file(filename);
 
+    filename = get_arg("args", argc, argv);
+    parse_json_args(filename);
 
 	filename = get_arg("logger", argc, argv);
 	load_logger_config(filename);
