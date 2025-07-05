@@ -1,1 +1,2 @@
-0xb7b6 dumplog 0:/home/faculty/abk6349/data/qemu/build//ws/log_out.bin
+0x804f614 randargs
+0x804f624 logrets

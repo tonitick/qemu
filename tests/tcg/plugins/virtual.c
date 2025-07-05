@@ -459,9 +459,41 @@ static void updatereg(unsigned int cpu_index, void *udata);
 static void updatemem(unsigned int cpu_index, void *udata);
 static void randstate(unsigned int cpu_index, void *udata);
 static void randargs(unsigned int cpu_index, void *udata);
+static void logrets(unsigned int cpu_index, void *udata);
 static void dumplogger(unsigned int cpu_index, void *udata);
 static void dyninst(unsigned int cpu_index, void *udata);
 static void dyninst_lib(unsigned int cpu_index, void *udata);
+
+uint32_t qemu_get_register(int reg);
+uint32_t qemu_get_register(int reg)
+{
+    g_autoptr(GArray) reg_list = qemu_plugin_get_registers();
+    g_autoptr(GByteArray) reg_value = g_byte_array_new();
+	int offset = 0;
+	int oreg = reg;
+
+	if (reg >= ARM_V7M_S0) 
+		oreg = 17 + ((reg - ARM_V7M_S0) / 2);
+
+
+    if (reg_list) {
+            qemu_plugin_reg_descriptor *rd = &g_array_index(
+                reg_list, qemu_plugin_reg_descriptor, oreg);
+            int count = qemu_plugin_read_register(rd->handle, reg_value);
+            g_assert(count > 0);
+    }
+
+	if ((reg >= ARM_V7M_S0) && ((reg - ARM_V7M_S0)  %2)) {
+			//S1...
+			offset = 4;
+	}
+
+    uint32_t return_data = reg_value->data[offset + 0];
+    return_data = (((uint32_t) (reg_value->data[offset + 1])) << 8)  | return_data;
+    return_data = (((uint32_t) (reg_value->data[offset + 2])) << 16) | return_data;
+    return_data = (((uint32_t) (reg_value->data[offset + 3])) << 24) | return_data;
+    return return_data;
+}
 
 cb_entry_t cb_registry[] = {
     { "updatepc", updatepc },
@@ -469,6 +501,7 @@ cb_entry_t cb_registry[] = {
 	{ "updatemem", updatemem},
 	{ "randstate", randstate},
     { "randargs", randargs },
+    { "logrets", logrets},
     { "raiseirq", raiseirq },
 	{ "dumplog", dumplogger},
 	{ "dyninst", dyninst},
@@ -733,7 +766,17 @@ float get_random_float(float min, float max) {
     return min + (random_word / (float)UINT32_MAX) * (max - min);
 }
 
+static int cur_iteration = 0;
 static void randargs(unsigned int cpu_index, void *udata) {
+    // printf("randargs - results for iteration %d:\n", cur_iteration);
+    // dump_latest_ret_values();
+    if (cur_iteration > 2) { // run 2 iterations
+        printf("randargs iteration %d limit reached, dump ret values and exit.\n", cur_iteration);
+        // dump_ret_values();
+        exit(0);
+    }
+    cur_iteration++;
+    printf("randargs iteration %d:\n", cur_iteration);
     // iterate arg_settings
     for (size_t i = 0; i < arg_count; i++) {
         ArgSetting *setting = &arg_settings[i];
@@ -771,10 +814,20 @@ static void randargs(unsigned int cpu_index, void *udata) {
         }
 
         if (setting->location_type == TYPE_REG) {
-            printf("randargs - setting register %s to value: %u\n", setting->reg, value.u32);
+            // printf("randargs - setting register %s to value: %u\n", setting->reg, value.u32);
+            if (setting->vtype == TYPE_FLOAT) {
+                printf("randargs - setting register %s to value: %g\n", setting->reg, value.f);
+            } else {
+                printf("randargs - setting register %s to value: %u\n", setting->reg, value.u32);
+            }
             qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
         } else if (setting->location_type == TYPE_ADDR) {
-            printf("randargs - writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+            // printf("randargs - writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+            if (setting->vtype == TYPE_FLOAT) {
+                printf("randargs - writing value %g to memory address: 0x%lx\n", value.f, setting->addr);
+            } else {
+                printf("randargs - writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+            }
             qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
         } else {
             fprintf(stderr, "Unsupported location type in setting '%s'\n", setting->name);
@@ -783,6 +836,41 @@ static void randargs(unsigned int cpu_index, void *udata) {
         }
     }
 }
+
+static void logrets(unsigned int cpu_index, void *udata) {
+    // This function is called when the magic instruction is executed
+    // It will dump the latest return values to the log buffer
+    printf("logrets called, dumping latest return values.\n");
+    for (size_t i = 0; i < ret_count; i++) {
+        RetSetting *setting = &ret_settings[i];
+        if (setting->location_type == TYPE_REG) {
+            // Log register value
+            ValueUnion value;
+            value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
+            if (setting->vtype == TYPE_FLOAT) {
+                // value.f = qemu_get_register(get_reg_by_name(setting->reg));
+                printf("logrets - register %s: %g\n", setting->reg, value.f);
+            } else {
+                // value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
+                printf("logrets - register %s: %u\n", setting->reg, value.u32);
+            }
+        } else if (setting->location_type == TYPE_ADDR) {
+            // Log memory value
+            ValueUnion value;
+            qemu_plugin_read_memory(setting->addr, (uint8_t *)&value, 4);
+            if (setting->vtype == TYPE_FLOAT) {
+                printf("logrets - memory address 0x%lx: %g\n", setting->addr, value.f);
+            } else {
+                printf("logrets - memory address 0x%lx: %u\n", setting->addr, value.u32);
+            }
+        } else {
+            fprintf(stderr, "Unsupported location type in setting '%s'\n", setting->name);
+            perror("logrets");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
 
 static void updatepc(unsigned int cpu_index, void *udata)
 {
@@ -890,9 +978,67 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 			qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_LOG_REG, entry_tmp, ret.entry->reg);
 		}
 
+        // // zz: this need support for float reg in log_reg
+        // for (size_t j = 0; j < ret_count; j++) {
+        //     RetSetting *setting = &ret_settings[j];
+        //     if (setting->xaddr == qemu_plugin_insn_vaddr(insn)) {
+        //         qemu_plugin_u64 entry_tmp;
+        //         setting->log_buf.buffer = malloc(UINT16_MAX + 1);
+        //         setting->log_buf.index = 0;
+        //         entry_tmp.offset = (size_t)&setting->log_buf;
+        //         if (setting->location_type == TYPE_REG) {
+        //             // Register logging
+        //             printf("Ret setting for register logging: %s, get_reg_by_name=%d\n", setting->reg, get_reg_by_name(setting->reg));
+        //             qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_LOG_REG, entry_tmp, get_reg_by_name(setting->reg));
+        //         } else if (setting->location_type == TYPE_ADDR) {
+        //             // Memory logging
+        //             // not implemented yet
+        //             printf("Ret setting for memory logging not implemented yet\n");
+        //             perror("vcpu_tb_trans");
+        //             exit(EXIT_FAILURE);
+        //         }
+        //     }
+        // }
 
 
-		//Second to Highest priority: Modifier
+
+		// //Second to Highest priority: Modifier
+		// //void * handle= qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn,  QEMU_PLUGIN_CB_GEN_LABEL, NULL, 0);
+		// size_t count = find_updates_for_address(qemu_plugin_insn_vaddr(insn), matches, MAX_MATCHES);
+		// if (count > 0) {
+		// for (size_t match_idx = 0; match_idx < count; ++match_idx) {
+		// 	UpdateEntry *e = matches[match_idx];
+
+		// 	printf("  Update Point: 0x%lx, ", e->update_point);
+	    //     if (e->type == TARGET_REGISTER || e->type == TARGET_DEREF) {
+    	//         printf("Target: r%d, ", e->target.reg_num);
+		// 		qemu_plugin_u64 entry;
+        //         // In TCG frontend it is already set, if you want to modify it you will have to
+        //         // change CPSR.
+        //         entry.offset = (size_t)(e->value.imm);
+		// 		entry.data = (void *)e;
+        //         qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_REG, entry, e->target.reg_num);
+	    //     } else if (e->type == TARGET_MEMORY) {
+		// 		printf("Target: r%d, ", e->target.reg_num);
+        //         qemu_plugin_u64 entry;
+        //         // In TCG frontend it is already set, if you want to modify it you will have to
+        //         // change CPSR.
+        //         entry.offset = (size_t)(e->value.imm);
+        //         qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_MEM, entry, e->target.addr);
+    	//         printf("Target: 0x%lx, ", e->target.addr);
+       	// 	}
+
+    	// }
+		// }
+
+		//Middle prioirity is Virtual instructions 
+		rule_t  *rule;
+        if (find_rule_by_address(qemu_plugin_insn_vaddr(insn), &rule)) {
+                qemu_plugin_register_vcpu_insn_exec_cb(
+                    insn, rule->func, QEMU_PLUGIN_CB_RW_REGS, rule->args);
+        }
+
+		//Second to Highest priority: Modifier (zz: move modifier after vi)
 		//void * handle= qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn,  QEMU_PLUGIN_CB_GEN_LABEL, NULL, 0);
 		size_t count = find_updates_for_address(qemu_plugin_insn_vaddr(insn), matches, MAX_MATCHES);
 		if (count > 0) {
@@ -920,13 +1066,6 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 
     	}
 		}
-
-		//Middle prioirity is Virtual instructions 
-		rule_t  *rule;
-        if (find_rule_by_address(qemu_plugin_insn_vaddr(insn), &rule)) {
-                qemu_plugin_register_vcpu_insn_exec_cb(
-                    insn, rule->func, QEMU_PLUGIN_CB_RW_REGS, rule->args);
-        }
 
 		//Lowest priority is detour
 		AddressTuple * tuple = is_target_address(qemu_plugin_insn_vaddr(insn));
@@ -1044,6 +1183,22 @@ void parse_json_args(const char *filename)
     dump_arg_settings();
 }
 
+void parse_json_outs(const char *filename);
+void parse_json_outs(const char *filename)
+{
+    char *json = read_json_file(filename);
+    if (!json) {
+        perror("read_json_file failed");
+        return;
+    }
+
+    parse_ret_settings(json);
+
+    free(json);
+
+    dump_ret_settings();
+}
+
 #if 0
 static void print_rules(void) {
     printf("Parsed %zu rules:\n", rules_count);
@@ -1089,6 +1244,9 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
     filename = get_arg("args", argc, argv);
     parse_json_args(filename);
+
+    filename = get_arg("outs", argc, argv);
+    parse_json_outs(filename);
 
 	filename = get_arg("logger", argc, argv);
 	load_logger_config(filename);

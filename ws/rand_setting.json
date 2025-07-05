@@ -1,0 +1,22 @@
+{
+  "this": {
+    "reg": "r0",
+    "type": "uint32",
+    "value_range": [536870944]
+  },
+  "v0": {
+    "addr": 536870944,
+    "type": "float",
+    "value_range": [0.1, 5.0]
+  },
+  "v1": {
+    "addr": 536870948,
+    "type": "float",
+    "value_range": [0.1, 5.0]
+  },
+  "b": {
+    "reg": "s0",
+    "type": "float",
+    "value_range": [0.1, 5.0]
+  }
+}
