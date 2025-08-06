@@ -24,6 +24,7 @@ int isdigit(int c);
 #include <ctype.h>
 #include "virtual.h"
 #include "json_parse.h"
+#include "path_logger.h"
 
 #define MAX_ENTRIES 1024
 #define MAX_LINE_LEN 128
@@ -444,6 +445,40 @@ unsigned long long* parse_addresses(const char *input, size_t *count) {
     return addresses;
 }
 
+// zz: basic block starts
+#define MAX_BASIC_BLOCKS 1024
+unsigned long bb_starts[MAX_BASIC_BLOCKS];
+int bb_count = 0;
+void parse_basic_block_file(const char *filename);
+void parse_basic_block_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening basic block file");
+        return;
+    }
+    // format: 0x..., separated by newlines
+    char line[64];                 // plenty for one address + newline
+    while (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        uint64_t addr = strtoull(line, &end, 0);  // base 0 ⇒ handles “0x…”
+        if (errno || end == line) {               // conversion failed
+            fprintf(stderr, "Invalid address: %s", line);
+            continue;
+        }
+
+        if (bb_count < MAX_BASIC_BLOCKS) {
+            bb_starts[bb_count++] = addr;
+        } else {
+            fprintf(stderr, "Max basic blocks limit reached (%d), skipping rest\n", MAX_BASIC_BLOCKS);
+            break;
+        }
+    }
+
+    for (int i = 0; i < bb_count; i++) {
+        printf("Basic Block %d starts at: 0x%lx\n", i, bb_starts[i]);
+    }
+}
 
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
@@ -460,6 +495,8 @@ static void updatemem(unsigned int cpu_index, void *udata);
 static void randstate(unsigned int cpu_index, void *udata);
 static void randargs(unsigned int cpu_index, void *udata);
 static void logrets(unsigned int cpu_index, void *udata);
+static void clearpathlogs(unsigned int cpu_index, void *udata);
+static void logbbstart(unsigned int cpu_index, void *udata);
 static void dumplogger(unsigned int cpu_index, void *udata);
 static void dyninst(unsigned int cpu_index, void *udata);
 static void dyninst_lib(unsigned int cpu_index, void *udata);
@@ -502,6 +539,8 @@ cb_entry_t cb_registry[] = {
 	{ "randstate", randstate},
     { "randargs", randargs },
     { "logrets", logrets},
+    { "clearpathlogs", clearpathlogs},
+    { "logbbstart", logbbstart},
     { "raiseirq", raiseirq },
 	{ "dumplog", dumplogger},
 	{ "dyninst", dyninst},
@@ -770,11 +809,23 @@ static int cur_iteration = 0;
 static void randargs(unsigned int cpu_index, void *udata) {
     // printf("randargs - results for iteration %d:\n", cur_iteration);
     // dump_latest_ret_values();
-    if (cur_iteration > 2) { // run 2 iterations
-        printf("randargs iteration %d limit reached, dump ret values and exit.\n", cur_iteration);
+    if (cur_iteration >= 6) { // run 3 iterations
+        printf("randargs iteration %d limit reached, dump values and exit.\n", cur_iteration);
         // dump_ret_values();
+        dump_all_path_logs();
         exit(0);
     }
+    if (cur_iteration == 0) {
+        // clear path logs
+        clear_all_path_logs();
+    }
+    else {
+        // log previous iteration values
+        record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+        // clear
+        current_path_len = 0;
+    }
+
     cur_iteration++;
     printf("randargs iteration %d:\n", cur_iteration);
     // iterate arg_settings
@@ -834,6 +885,9 @@ static void randargs(unsigned int cpu_index, void *udata) {
             perror("randargs");
             exit(EXIT_FAILURE);
         }
+
+        // log values
+        logged_in_values[i] = value;
     }
 }
 
@@ -843,9 +897,9 @@ static void logrets(unsigned int cpu_index, void *udata) {
     printf("logrets called, dumping latest return values.\n");
     for (size_t i = 0; i < ret_count; i++) {
         RetSetting *setting = &ret_settings[i];
+        ValueUnion value;
         if (setting->location_type == TYPE_REG) {
             // Log register value
-            ValueUnion value;
             value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
             if (setting->vtype == TYPE_FLOAT) {
                 // value.f = qemu_get_register(get_reg_by_name(setting->reg));
@@ -856,7 +910,6 @@ static void logrets(unsigned int cpu_index, void *udata) {
             }
         } else if (setting->location_type == TYPE_ADDR) {
             // Log memory value
-            ValueUnion value;
             qemu_plugin_read_memory(setting->addr, (uint8_t *)&value, 4);
             if (setting->vtype == TYPE_FLOAT) {
                 printf("logrets - memory address 0x%lx: %g\n", setting->addr, value.f);
@@ -868,9 +921,22 @@ static void logrets(unsigned int cpu_index, void *udata) {
             perror("logrets");
             exit(EXIT_FAILURE);
         }
+
+        // log out values
+        logged_out_values[i] = value;
     }
 }
 
+static void clearpathlogs(unsigned int cpu_index, void *udata) {
+    // Clear all path logs
+    clear_all_path_logs();
+}
+
+static void logbbstart(unsigned int cpu_index, void *udata) {
+    // get pc vlue
+    uint32_t pc = qemu_get_register(15); // Assuming 15 is the
+    current_path[current_path_len++] = (uint64_t)pc;
+}
 
 static void updatepc(unsigned int cpu_index, void *udata)
 {
@@ -1037,6 +1103,15 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
                 qemu_plugin_register_vcpu_insn_exec_cb(
                     insn, rule->func, QEMU_PLUGIN_CB_RW_REGS, rule->args);
         }
+        // zz: logbbstart for bb_starts addresses
+        for (size_t j = 0; j < bb_count; j++) {
+            if (bb_starts[j] == qemu_plugin_insn_vaddr(insn)) {
+                // Register the callback for bb start
+                qemu_plugin_register_vcpu_insn_exec_cb(
+                    insn, logbbstart, QEMU_PLUGIN_CB_RW_REGS, NULL);
+            }
+        }
+
 
 		//Second to Highest priority: Modifier (zz: move modifier after vi)
 		//void * handle= qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn,  QEMU_PLUGIN_CB_GEN_LABEL, NULL, 0);
@@ -1247,6 +1322,9 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
     filename = get_arg("outs", argc, argv);
     parse_json_outs(filename);
+
+    filename = get_arg("basicblocks", argc, argv);
+    parse_basic_block_file(filename);
 
 	filename = get_arg("logger", argc, argv);
 	load_logger_config(filename);
