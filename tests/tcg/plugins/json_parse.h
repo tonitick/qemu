@@ -64,6 +64,7 @@ typedef enum {
 } ValueLocationType;
 
 typedef enum {
+    TYPE_UNKNOWN,
     TYPE_FLOAT,
     TYPE_UINT32
 } IOValueType;
@@ -127,7 +128,10 @@ void parse_arg_settings(const char *json)
         /* type */
         cJSON *type = cJSON_GetObjectItemCaseSensitive(arg, "type");
         if (cJSON_IsString(type)) {
-            if (strcmp(type->valuestring, "float") == 0) {
+            if (strcmp(type->valuestring, "unknown") == 0) {
+                s->vtype = TYPE_UNKNOWN;
+            }
+            else if (strcmp(type->valuestring, "float") == 0) {
                 s->vtype = TYPE_FLOAT;
             } else if (strcmp(type->valuestring, "uint32") == 0) {
                 s->vtype = TYPE_UINT32;
@@ -178,10 +182,22 @@ void dump_arg_settings(void)
     puts("Parsed arguments:");
     for (size_t i = 0; i < arg_count; ++i) {
         const ArgSetting *p = &arg_settings[i];
-        printf("Arg %zu: name='%s', type=%s, location_type=%s, ",
-               i, p->name,
-               p->vtype == TYPE_FLOAT ? "float" : "uint32",
-               p->location_type == TYPE_REG ? "reg" : "addr");
+        if (p->vtype == TYPE_UNKNOWN) {
+            printf("Arg %zu: name='%s', type=unknown, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_FLOAT) {
+            printf("Arg %zu: name='%s', type=float, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT32) {
+            printf("Arg %zu: name='%s', type=uint32, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else {
+            fprintf(stderr, "Unknown type for argument '%s'\n", p->name);
+            exit(1);
+        }
         if (p->location_type == TYPE_REG) {
             printf("reg=%s, ", p->reg);
         } else if (p->location_type == TYPE_ADDR) {
@@ -263,7 +279,10 @@ void parse_ret_settings(const char *json)
         /* type */
         cJSON *type = cJSON_GetObjectItemCaseSensitive(arg, "type");
         if (cJSON_IsString(type)) {
-            if (strcmp(type->valuestring, "float") == 0) {
+            if (strcmp(type->valuestring, "unknown") == 0) {
+                s->vtype = TYPE_UNKNOWN;
+            }
+            else if (strcmp(type->valuestring, "float") == 0) {
                 s->vtype = TYPE_FLOAT;
             } else if (strcmp(type->valuestring, "uint32") == 0) {
                 s->vtype = TYPE_UINT32;
@@ -285,10 +304,23 @@ void dump_ret_settings(void)
     printf("Parsed %zu ret settings:\n", ret_count);
     for (size_t i = 0; i < ret_count; ++i) {
         const RetSetting *p = &ret_settings[i];
-        printf("Ret %zu: name='%s', type=%s, location_type=%s, ",
-               i, p->name,
-               p->vtype == TYPE_FLOAT ? "float" : "uint32",
-               p->location_type == TYPE_REG ? "reg" : "addr");
+        if (p->vtype == TYPE_UNKNOWN) {
+            printf("Ret %zu: name='%s', type=unknown, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_FLOAT) {
+            printf("Ret %zu: name='%s', type=float, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT32) {
+            printf("Ret %zu: name='%s', type=uint32, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else {
+            fprintf(stderr, "Unknown type for ret '%s'\n", p->name);
+            exit(1);
+        }
+
         if (p->location_type == TYPE_REG) {
             printf("reg=%s, ", p->reg);
         } else if (p->location_type == TYPE_ADDR) {

@@ -6,13 +6,11 @@
   },
   "v0": {
     "addr": 536870944,
-    "type": "float",
-    "value_range": [0.1, 5.0]
+    "type": "unknown"
   },
   "v1": {
     "addr": 536870948,
-    "type": "float",
-    "value_range": [0.1, 5.0]
+    "type": "unknown"
   },
   "b": {
     "reg": "s0",

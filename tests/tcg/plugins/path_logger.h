@@ -139,6 +139,7 @@ void clear_all_path_logs(void)
 uint64_t current_path[MAX_PATH_LENGTH];
 size_t current_path_len = 0;
 ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS];
+bool is_logging_valid = true;
 
 
 #endif // PATH_LOGGER_H

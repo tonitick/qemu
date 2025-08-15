@@ -25,6 +25,7 @@ int isdigit(int c);
 #include "virtual.h"
 #include "json_parse.h"
 #include "path_logger.h"
+#include "capstone_util.h"
 
 #define MAX_ENTRIES 1024
 #define MAX_LINE_LEN 128
@@ -821,11 +822,14 @@ static void randargs(unsigned int cpu_index, void *udata) {
     }
     else {
         // log previous iteration values
-        record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+        if (is_logging_valid) {
+            record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+        }
         // clear
         current_path_len = 0;
     }
 
+    is_logging_valid = true;
     cur_iteration++;
     printf("randargs iteration %d:\n", cur_iteration);
     // iterate arg_settings
@@ -833,6 +837,24 @@ static void randargs(unsigned int cpu_index, void *udata) {
         ArgSetting *setting = &arg_settings[i];
         // use range to generate random value
         ValueUnion value;
+        if (setting->vtype == TYPE_UNKNOWN) {
+            // treat as uint32 first
+            // value_count shoule be 0
+            if (setting->value_count != 0) {
+                fprintf(stderr, "Invalid value count for unknown type in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
+            }
+            setting->vtype = TYPE_UINT32; // default to uint32
+
+            // perror("randargs");
+            // exit(EXIT_FAILURE);
+            // use default [0, 10]
+            setting->value_count = 2;
+            setting->value_range[0].u32 = 0;
+            setting->value_range[1].u32 = 10;
+            value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+        }
         if (setting->vtype == TYPE_FLOAT) {
             // assert(setting->value_count == 2);
             if (setting->value_count == 1) {
@@ -932,6 +954,50 @@ static void clearpathlogs(unsigned int cpu_index, void *udata) {
     clear_all_path_logs();
 }
 
+static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
+                   qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+    unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
+    unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
+    int is_store = qemu_plugin_mem_is_store(info);
+    fprintf(stderr, "[update_float_addr_var_mem_cb] %s %u-bit @ 0x%08" PRIx64 "\n",
+            is_store ? "STORE" : "LOAD", 8u << sz_shift, vaddr);
+    /* optional: value seen */
+    // qemu_plugin_mem_value val = qemu_plugin_mem_get_value(info);
+
+    // check whether the address is in arg_settings
+    if (sz_bytes == 4 && !is_store) { // only handle 32-bit loads
+        // Iterate through arg_settings to find a match
+        for (size_t i = 0; i < arg_count; i++) {
+            ArgSetting *setting = &arg_settings[i];
+            if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+                // We have a match, update the arg setting
+                if (setting->vtype != TYPE_FLOAT) {
+                    // update to float
+                    setting->vtype = TYPE_FLOAT;
+                    setting->value_count = 2; // single value
+                    setting->value_range[0].f = 0.5f;
+                    setting->value_range[1].f = 5.0f; // defaut range [0.5, 5.0]
+                    /***********************************************************************************************
+                       note:
+                       Memory callbacks are called after a successful load or store
+                       according to https://qemu.readthedocs.io/en/v9.0.4/devel/tcg-plugins.html
+                       we cannot update the memory value here, should discard the results for the current iteration
+                    ***********************************************************************************************/
+                    // ValueUnion value;
+                    // value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
+                    // printf("[update_float_addr_var_mem_cb] update memory at 0x%lx to float value: %g\n", vaddr, value.f);
+                    // // write the new float value to memory
+                    // qemu_plugin_write_memory(vaddr, (uint8_t *)&value, 4);
+                    // // update current logged_in_values
+                    // logged_in_values[i].f = value.f;
+                    // printf("[update_float_addr_var_mem_cb] updated logged_in_values[%zu] to %g\n", i, logged_in_values[i].f);
+                    is_logging_valid = false; // invalidate current logging
+                }
+            }
+        }
+    }
+}
+
 static void logbbstart(unsigned int cpu_index, void *udata) {
     // get pc vlue
     uint32_t pc = qemu_get_register(15); // Assuming 15 is the
@@ -1018,6 +1084,15 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 	UpdateEntry *matches[MAX_MATCHES];
 
 	printf("->Virtual Clock: %llu \n", (unsigned long long)qemu_plugin_get_virtual_timer());
+
+
+    csh cshandle;
+    cs_insn *csinsn;
+    size_t cs_disasm_count;
+    if (cs_open(CS_ARCH_ARM, CS_MODE_THUMB, &cshandle) != CS_ERR_OK) {
+        fprintf(stderr, "Failed to open Capstone disassembler\n");
+        return;
+    }
 
     for (i = 0; i < n; i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
@@ -1112,6 +1187,37 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             }
         }
 
+        // zz: hanlde dynamic float identification before VI (rand_args)
+        size_t inst_len = qemu_plugin_insn_size(insn);
+        GByteArray *inst_bytes = g_byte_array_sized_new(inst_len);
+        g_byte_array_set_size(inst_bytes, inst_len);
+        size_t copied = qemu_plugin_insn_data(insn, inst_bytes->data, inst_len);
+        uint64_t insn_addr = qemu_plugin_insn_vaddr(insn);
+
+        printf("[instr] 0x%08lx: ", (unsigned long)insn_addr);
+        for (size_t b = 0; b < copied; b++) {
+            printf("%02x ", inst_bytes->data[b]);
+        }
+        printf("\n");
+        // capstone disassembly
+        cs_option(cshandle, CS_OPT_DETAIL, CS_OPT_ON);
+        cs_disasm_count = cs_disasm(
+            cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
+        if (cs_disasm_count > 0) {
+            printf("[disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
+            // check if the instructino access memory
+            // if (arm_insn_accesses_mem(csinsn)) {
+            //     printf("    [mem] instruction accesses memory\n");
+            // }
+            if (arm_insn_is_fp_mem_access(csinsn)) {
+                // printf("    [mem] float instruction accesses floating point memory\n");
+                qemu_plugin_register_vcpu_mem_cb(insn, update_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, NULL);
+            }
+
+        } else {
+            printf("[disas] <disas error>\n");
+        }
+        g_byte_array_free(inst_bytes, TRUE);
 
 		//Second to Highest priority: Modifier (zz: move modifier after vi)
 		//void * handle= qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn,  QEMU_PLUGIN_CB_GEN_LABEL, NULL, 0);

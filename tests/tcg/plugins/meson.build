@@ -1,6 +1,7 @@
 t = []
 
 cjson = dependency(['cjson', 'libcjson'], required: true)
+capstone = dependency('capstone', required: true)
 
 if get_option('plugins')
   foreach i : ['bb', 'empty', 'inline', 'insn', 'mem', 'reset', 'syscall', 'virtual']
@@ -13,7 +14,7 @@ if get_option('plugins')
     else
       t += shared_module(i, files(i + '.c'),
                         include_directories: '../../../include/qemu',
-                        dependencies: [glib, cjson])
+                        dependencies: [glib, cjson, capstone])
     endif
   endforeach
 endif
