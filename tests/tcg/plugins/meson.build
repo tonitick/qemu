@@ -4,7 +4,7 @@ cjson = dependency(['cjson', 'libcjson'], required: true)
 capstone = dependency('capstone', required: true)
 
 if get_option('plugins')
-  foreach i : ['bb', 'empty', 'inline', 'insn', 'mem', 'reset', 'syscall', 'virtual']
+  foreach i : ['bb', 'empty', 'inline', 'insn', 'mem', 'reset', 'syscall']
     if host_os == 'windows'
       t += shared_module(i, files(i + '.c') + '../../../contrib/plugins/win32_linker.c',
                         include_directories: '../../../include/qemu',
