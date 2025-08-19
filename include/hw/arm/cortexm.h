@@ -1,5 +1,5 @@
 /*
- * CORTEXM4 SoC
+ * CORTEXM SoC
  *
  * Copyright (c) 2014 Alistair Francis <alistair@alistair23.me>
  *
@@ -22,15 +22,15 @@
  * THE SOFTWARE.
  */
 
-#ifndef HW_ARM_CORTEXM4_SOC_H
-#define HW_ARM_CORTEXM4_SOC_H
+#ifndef HW_ARM_CORTEXM_SOC_H
+#define HW_ARM_CORTEXM_SOC_H
 
 #include "hw/or-irq.h"
 #include "hw/arm/armv7m.h"
 #include "qom/object.h"
 
-#define TYPE_CORTEXM4_SOC "cortexm4-soc"
-OBJECT_DECLARE_SIMPLE_TYPE(CORTEXM4State, CORTEXM4_SOC)
+#define TYPE_CORTEXM_SOC "cortexm-soc"
+OBJECT_DECLARE_SIMPLE_TYPE(CORTEXMState, CORTEXM_SOC)
 
 
 #define FLASH_BASE_ADDRESS 0x00000000
@@ -38,14 +38,21 @@ OBJECT_DECLARE_SIMPLE_TYPE(CORTEXM4State, CORTEXM4_SOC)
 #define SRAM_SIZE (512 * 1024 * 1024)
 #define SRAM_BASE_ADDRESS 0x20000000
 
-struct CORTEXM4State {
+struct CORTEXMState {
     SysBusDevice parent_obj;
+	char * cpu_string;
 
     ARMv7MState armv7m;
 
     MemoryRegion sram;
     MemoryRegion flash;
     MemoryRegion flash_alias;
+
+	HostMemoryBackend * ram_backend;
+	HostMemoryBackend * shram_backend;
+
+	uint32_t ram_baseaddr;
+	uint32_t shram_baseaddr;
 
     Clock *sysclk;
     Clock *refclk;

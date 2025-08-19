@@ -590,6 +590,7 @@ static void armv7m_reset(void *opaque)
     cpu_reset(CPU(cpu));
 }
 
+extern void armv7m_nvic_clear_pending(NVICState *s, int irq, bool secure);
 void raise_irq(CPUState *cs, int irq_num);
 void raise_irq(CPUState *cs, int irq_num) {
     if (!cs) {
@@ -610,9 +611,53 @@ void raise_irq(CPUState *cs, int irq_num) {
         return;
     }
 
-	bql_lock();
+	int locked =0;
+	if (!bql_locked()) {
+		bql_lock();
+		locked = 1;
+	}
+
 	armv7m_nvic_set_pending(cpu->env.nvic, irq_num, false);
-	bql_unlock();
+
+	if (locked) {
+		bql_unlock();
+	}
+
+}
+
+
+void pulse_irq(CPUState *cs, int irq_num);
+void pulse_irq(CPUState *cs, int irq_num) {
+    if (!cs) {
+        fprintf(stderr, "raise_arm_irq: NULL CPUState\n");
+        return;
+    }
+
+    if (!object_dynamic_cast(OBJECT(cs), TYPE_ARM_CPU)) {
+        fprintf(stderr, "raise_arm_irq: not an ARM CPU\n");
+        return;
+    }
+
+    ARMCPU *cpu = ARM_CPU(cs);
+
+
+    if (!cpu->env.nvic) {
+        fprintf(stderr, "raise_arm_irq: NVIC not initialized\n");
+        return;
+    }
+
+    int locked =0;
+    if (!bql_locked()) {
+        bql_lock();
+        locked = 1;
+    }
+
+    armv7m_nvic_set_pending(cpu->env.nvic, irq_num, false);
+    armv7m_nvic_clear_pending(cpu->env.nvic, irq_num, false);
+
+    if (locked) {
+        bql_unlock();
+    }
 
 }
 void armv7m_load_elf(CPUState *cs,const char *kernel_filename);
@@ -622,8 +667,8 @@ void armv7m_load_elf(CPUState *cs,const char *kernel_filename) {
     AddressSpace *as;
     int asidx;
     ARMCPU *cpu = ARM_CPU(cs);
-	hwaddr mem_base = 0x20800000;
-	int mem_size = 0x1E0E0000;
+	hwaddr mem_base = 0x3FF00000;
+	int mem_size = 0x0FFFFF;
 
     if (arm_feature(&cpu->env, ARM_FEATURE_EL3)) {
         asidx = ARMASIdx_S;

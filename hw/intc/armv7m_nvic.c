@@ -502,7 +502,8 @@ static void nvic_irq_update(NVICState *s)
  * if @secure is true and @irq does not specify one of the fixed set
  * of architecturally banked exceptions.
  */
-static void armv7m_nvic_clear_pending(NVICState *s, int irq, bool secure)
+void armv7m_nvic_clear_pending(NVICState *s, int irq, bool secure);
+void armv7m_nvic_clear_pending(NVICState *s, int irq, bool secure)
 {
     VecInfo *vec;
 

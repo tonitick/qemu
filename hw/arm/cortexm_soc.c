@@ -1,5 +1,5 @@
 /*
- * CORTEXM4 SoC
+ * CORTEXM SoC
  *
  * Copyright (c) 2014 Alistair Francis <alistair@alistair23.me>
  *
@@ -24,16 +24,19 @@
 
 #include "qemu/osdep.h"
 #include "qapi/error.h"
+#include "qom/object.h"
 #include "system/address-spaces.h"
 #include "system/system.h"
-#include "hw/arm/cortexm4_soc.h"
+#include "system/hostmem.h"
+#include "hw/arm/cortexm.h"
 #include "hw/qdev-clock.h"
 #include "hw/misc/unimp.h"
+#include "hw/boards.h"
 
 
-static void cortexm4_soc_initfn(Object *obj)
+static void cortexm_soc_initfn(Object *obj)
 {
-    CORTEXM4State *s = CORTEXM4_SOC(obj);
+    CORTEXMState *s = CORTEXM_SOC(obj);
 
     object_initialize_child(obj, "armv7m", &s->armv7m, TYPE_ARMV7M);
 
@@ -41,12 +44,16 @@ static void cortexm4_soc_initfn(Object *obj)
     s->refclk = qdev_init_clock_in(DEVICE(s), "refclk", NULL, NULL, 0);
 }
 
-static void cortexm4_soc_realize(DeviceState *dev_soc, Error **errp)
+static void cortexm_soc_realize(DeviceState *dev_soc, Error **errp)
 {
-    CORTEXM4State *s = CORTEXM4_SOC(dev_soc);
+    CORTEXMState *s = CORTEXM_SOC(dev_soc);
+	MachineState *ms = MACHINE(qdev_get_machine());
     MemoryRegion *system_memory = get_system_memory();
     DeviceState *armv7m;
     Error *err = NULL;
+	
+	//MemoryRegion *ram;
+
 
     /*
      * We use s->refclk internally and only define it with qdev_init_clock_in()
@@ -72,7 +79,7 @@ static void cortexm4_soc_realize(DeviceState *dev_soc, Error **errp)
     clock_set_mul_div(s->refclk, 8, 1);
     clock_set_source(s->refclk, s->sysclk);
 
-    memory_region_init_rom(&s->flash, OBJECT(dev_soc), "genric_flash",
+    memory_region_init_rom(&s->flash, OBJECT(dev_soc), "generic_flash",
                            FLASH_SIZE, &err);
     if (err != NULL) {
         error_propagate(errp, err);
@@ -81,51 +88,87 @@ static void cortexm4_soc_realize(DeviceState *dev_soc, Error **errp)
     memory_region_add_subregion(system_memory, FLASH_BASE_ADDRESS, &s->flash);
     memory_region_add_subregion(system_memory, 0, &s->flash_alias);
 
-    memory_region_init_ram(&s->sram, NULL, "CORTEXM4.sram", SRAM_SIZE,
+#if 0
+
+    if (s->ram_backend) {
+        ram = s->ram_backend;
+    } else {
+		ram = &s->sram;
+		memory_region_init_ram(&s->sram, NULL, "CORTEXM.sram", SRAM_SIZE,
                            &err);
-    if (err != NULL) {
-        error_propagate(errp, err);
-        return;
+		if (err != NULL) {
+       		error_propagate(errp, err);
+    	    return;
+	    }
     }
-    memory_region_add_subregion(system_memory, SRAM_BASE_ADDRESS, &s->sram);
+
+
+
+	memory_region_add_subregion(system_memory, 0x20000000, ram);
+#endif 
+
+	if (s->shram_backend) {
+			memory_region_add_subregion(system_memory, s->shram_baseaddr, &s->shram_backend->mr);
+	}
+
 
 
     armv7m = DEVICE(&s->armv7m);
+
 	//M4 NVIC Supports upto 240
     qdev_prop_set_uint32(armv7m, "num-irq", 240);
     qdev_prop_set_uint8(armv7m, "num-prio-bits", 4);
-    qdev_prop_set_string(armv7m, "cpu-type", ARM_CPU_TYPE_NAME("cortex-m4"));
+  	qdev_prop_set_string(armv7m, "cpu-type", ms->cpu_type);
     qdev_prop_set_bit(armv7m, "enable-bitband", true);
     qdev_connect_clock_in(armv7m, "cpuclk", s->sysclk);
     qdev_connect_clock_in(armv7m, "refclk", s->refclk);
     object_property_set_link(OBJECT(&s->armv7m), "memory",
                              OBJECT(system_memory), &error_abort);
+
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->armv7m), errp)) {
+		printf("Error in SOC Relaize \n");
         return;
     }
 
     create_unimplemented_device("generic_io",    0x40000000, 0x1FFFFFFF);
 }
 
-static void cortexm4_soc_class_init(ObjectClass *klass, const void *data)
+static Property cortexm_soc_props[] = {
+    DEFINE_PROP_UINT32("ram_baseaddr",   CORTEXMState, ram_baseaddr,   0x20000000),
+    DEFINE_PROP_UINT32("shram_baseaddr", CORTEXMState, shram_baseaddr, 0x10000000),
+};
+
+
+static void cortexm_soc_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
-    dc->realize = cortexm4_soc_realize;
-    /* No vmstate or reset required: device has no internal state */
+    dc->realize = cortexm_soc_realize;
+
+
+
+	object_class_property_add_link(klass, "shram_backend",
+    TYPE_MEMORY_BACKEND,
+    offsetof(CORTEXMState, shram_backend),
+    qdev_prop_allow_set_link_before_realize,
+    0);
+
+	// device_class_set_props(dc, cortexm_soc_props);
+    device_class_set_props_n(dc, cortexm_soc_props, ARRAY_SIZE(cortexm_soc_props));
+
 }
 
-static const TypeInfo cortexm4_soc_info = {
-    .name          = TYPE_CORTEXM4_SOC,
+static const TypeInfo cortexm_soc_info = {
+    .name          = TYPE_CORTEXM_SOC,
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(CORTEXM4State),
-    .instance_init = cortexm4_soc_initfn,
-    .class_init    = cortexm4_soc_class_init,
+    .instance_size = sizeof(CORTEXMState),
+    .instance_init = cortexm_soc_initfn,
+    .class_init    = cortexm_soc_class_init,
 };
 
-static void cortexm4_soc_types(void)
+static void cortexm_soc_types(void)
 {
-    type_register_static(&cortexm4_soc_info);
+    type_register_static(&cortexm_soc_info);
 }
 
-type_init(cortexm4_soc_types)
+type_init(cortexm_soc_types)
