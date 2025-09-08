@@ -127,6 +127,68 @@ void dump_all_path_logs(void)
         }
     }
 }
+
+int check_path_log_size_and_dump(char* dump_path); // TODO: dump all path logs
+int check_path_log_size_and_dump(char* dump_path) { // TODO: dump all path logs
+    // if a path log size reach 100, dump the related path logs
+    int max_log_size = 10;
+    Entry *e, *tmp;
+
+    FILE *f = fopen(dump_path, "w");
+    if (!f) {
+        perror("fopen dump_path");
+        exit(1);
+    }
+
+    HASH_ITER(hh, g_map, e, tmp) {
+        bool need_dump = false;
+        for (size_t i = 0; i < arg_count; ++i) {
+            if (e->args[i].count >= max_log_size) {
+                need_dump = true;
+                break;
+            }
+        }
+        if (need_dump) {
+            printf("Dumping path log for trace len=%zu:", e->len);
+            for (size_t i = 0; i < e->len; ++i)
+                printf(" 0x%016" PRIx64, e->key[i]);
+            putchar('\n');
+
+            for (size_t i = 0; i < arg_count; ++i) {
+                if (arg_settings[i].vtype == TYPE_FLOAT) {
+                    printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+                    fprintf(f, "[IN] %s: ", arg_settings[i].name);
+                    for (size_t j = 0; j < e->args[i].count; ++j) {
+                        printf("       %g\n", e->args[i].data.f[j]);
+                        fprintf(f, "%.10f ", e->args[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+            }
+
+            for (size_t i = 0; i < ret_count; ++i) {
+                if (ret_settings[i].vtype == TYPE_FLOAT) {
+                    printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
+                    fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                    for (size_t j = 0; j < e->rets[i].count; ++j) {
+                        printf("       %g\n", e->rets[i].data.f[j]);
+                        fprintf(f, "%.10f ", e->rets[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+            }
+            // after dump, clear the entry
+            HASH_DEL(g_map, e); 
+            free(e->key); 
+            free(e);
+            return 1; // dumped one entry
+        }
+    }
+    fclose(f);
+    return 0; // no entry dumped
+}
+
+
 void clear_all_path_logs(void);
 void clear_all_path_logs(void)
 {

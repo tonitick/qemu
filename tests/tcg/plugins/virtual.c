@@ -30,6 +30,7 @@ int isdigit(int c);
 #define MAX_ENTRIES 1024
 #define MAX_LINE_LEN 128
 #define MAX_RULES 256
+char dump_path[256] = "collected_data";
 
 typedef unsigned long hwaddr;
 typedef struct unimp_exporter {
@@ -810,10 +811,14 @@ static int cur_iteration = 0;
 static void randargs(unsigned int cpu_index, void *udata) {
     // printf("randargs - results for iteration %d:\n", cur_iteration);
     // dump_latest_ret_values();
-    if (cur_iteration >= 6) { // run 3 iterations
-        printf("randargs iteration %d limit reached, dump values and exit.\n", cur_iteration);
-        // dump_ret_values();
-        dump_all_path_logs();
+    // if (cur_iteration >= 6) { // run 3 iterations
+    //     printf("randargs iteration %d limit reached, dump values and exit.\n", cur_iteration);
+    //     // dump_ret_values();
+    //     dump_all_path_logs();
+    //     exit(0);
+    // }
+    if (check_path_log_size_and_dump(dump_path)) {
+        printf("log size reach 100, dump related path logs\n");
         exit(0);
     }
     if (cur_iteration == 0) {
@@ -1432,11 +1437,17 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     filename = get_arg("basicblocks", argc, argv);
     parse_basic_block_file(filename);
 
-	filename = get_arg("logger", argc, argv);
-	load_logger_config(filename);
+	// filename = get_arg("logger", argc, argv);
+	// load_logger_config(filename);
 
 	filename = get_arg("monitor", argc, argv);
 	runtime = filename; // Lazy Init
+
+    const char* pass_in_dump_path = get_arg("dump_path", argc, argv);
+    if (pass_in_dump_path) {
+        strncpy(dump_path, pass_in_dump_path, sizeof(dump_path) - 1);
+    }
+    printf("Dump path set to: %s\n", dump_path);
 
 
 	qemu_plugin_unimp_export_device((void *)&importer);
