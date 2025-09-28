@@ -131,7 +131,7 @@ void dump_all_path_logs(void)
 int check_path_log_size_and_dump(char* dump_path); // TODO: dump all path logs
 int check_path_log_size_and_dump(char* dump_path) { // TODO: dump all path logs
     // if a path log size reach 100, dump the related path logs
-    int max_log_size = 10;
+    int max_log_size = 100;
     Entry *e, *tmp;
 
     FILE *f = fopen(dump_path, "w");
