@@ -17,9 +17,9 @@
 #include <errno.h>
 #include <cjson/cJSON.h>
 
-/* -------------------------------------------------------------------------- */
-/* Slurp an entire file into memory                                           */
-/* -------------------------------------------------------------------------- */
+// ===============================================================================================================================
+// Helper: read json file to buffer
+// ===============================================================================================================================
 char *read_json_file(const char *path);
 char *read_json_file(const char *path)
 {
@@ -69,6 +69,12 @@ typedef enum {
     TYPE_UINT32
 } IOValueType;
 
+typedef enum {
+    IS_PTR_TRUE,
+    IS_PTR_FALSE,
+    IS_PTR_UNKNOWN
+} IsPointerType;
+
 typedef union {
     float f;
     uint32_t u32;
@@ -86,6 +92,9 @@ typedef struct {
     ValueLocationType location_type; /* register or addr */
     char reg[MAX_REG];
     unsigned long addr;
+    size_t sz; // size in bytes
+
+    IsPointerType is_pointer; /* whether the value is a pointer */
 
     IOValueType vtype;
     ValueUnion value_range[2]; /* one- or two-element range */
@@ -93,6 +102,24 @@ typedef struct {
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
+
+int find_ptr_arg_by_addr(unsigned long addr, size_t sz); // return the index in arg_settings, or -1 if not found
+int find_ptr_arg_by_addr(unsigned long addr, size_t sz) {
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *s = &arg_settings[i];
+        // if (s->location_type == TYPE_ADDR && s->is_pointer == IS_PTR_TRUE) {
+        //     if (addr == s->addr && sz == s->sz) {
+        //         return (int)i;
+        //     }
+        // }
+        if (s->is_pointer == IS_PTR_TRUE && s->vtype == TYPE_UINT32 && s->value_count == 1) {
+            if (addr == s->value_range[0].u32 && sz == s->sz) {
+                return (int)i;
+            }
+        }
+    }
+    return -1;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Parse JSON text into an array of ArgSetting                                */
@@ -138,9 +165,43 @@ void parse_arg_settings(const char *json)
             } else {
                 fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
                 cJSON_Delete(root);
-                return;  // exit on unsupported type
+                exit(EXIT_FAILURE);  // exit on unsupported type
             }
         }
+
+        /* size */
+        cJSON *size = cJSON_GetObjectItemCaseSensitive(arg, "size");
+        if (cJSON_IsNumber(size)) {
+            s->sz = (size_t)size->valueint;
+        } else {
+            // default size
+            if (s->vtype == TYPE_FLOAT) {
+                s->sz = 4; // float32
+            } else if (s->vtype == TYPE_UINT32) {
+                s->sz = 4; // uint32
+            } else {
+                s->sz = 0; // indicating unknown size
+            }
+        }
+
+        /* is_pointer */
+        cJSON *is_ptr = cJSON_GetObjectItemCaseSensitive(arg, "is_pointer");
+        if (cJSON_IsString(is_ptr)) {
+            if (strcmp(is_ptr->valuestring, "true") == 0) {
+                s->is_pointer = IS_PTR_TRUE;
+            } else if (strcmp(is_ptr->valuestring, "false") == 0) {
+                s->is_pointer = IS_PTR_FALSE;
+            } else {
+                // s->is_pointer = IS_PTR_UNKNOWN;
+                fprintf(stderr, "Unsupported is_pointer value '%s' in '%s'\n", is_ptr->valuestring, s->name);
+                cJSON_Delete(root);
+                exit(EXIT_FAILURE);  // exit on unsupported value
+            }
+        } else {
+            s->is_pointer = IS_PTR_UNKNOWN; // default
+        }
+
+
         /* value_range: array of 1 or 2 numbers */
         cJSON *vr = cJSON_GetObjectItemCaseSensitive(arg, "value_range");
         if (cJSON_IsArray(vr)) {
@@ -174,6 +235,29 @@ void parse_arg_settings(const char *json)
 }
 
 /* -------------------------------------------------------------------------- */
+/* Utility: check whether mem var locations are equivalent or overlap         */
+/* -------------------------------------------------------------------------- */
+int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz);
+int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
+{
+    if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
+    if (a->sz == 0 || sz == 0) return 0; /* unknown size */
+    if (a->addr == addr && a->sz == sz) return 1; /* exact match */
+    return 0; /* no match */
+}
+
+
+int overlap_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz);
+int overlap_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
+{
+    if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
+    if (a->sz == 0 || sz == 0) return 0; /* unknown size */
+    if (same_mem_locs(a, addr, sz)) return 0; /* exact match */
+    if (a->addr < addr + sz && addr < a->addr + a->sz) return 1; /* overlap */
+    return 0; /* not overlap */
+}
+
+/* -------------------------------------------------------------------------- */
 /* Pretty-print the parsed data                                               */
 /* -------------------------------------------------------------------------- */
 void dump_arg_settings(void);
@@ -196,12 +280,26 @@ void dump_arg_settings(void)
                    p->location_type == TYPE_REG ? "reg" : "addr");
         } else {
             fprintf(stderr, "Unknown type for argument '%s'\n", p->name);
-            exit(1);
+            exit(EXIT_FAILURE);
         }
         if (p->location_type == TYPE_REG) {
             printf("reg=%s, ", p->reg);
         } else if (p->location_type == TYPE_ADDR) {
             printf("addr=0x%lx, ", p->addr);
+        }
+
+        if (p->sz != 0) {
+            printf("size=%zu bytes, ", p->sz);
+        } else {
+            printf("size=unknown, ");
+        }
+
+        if (p->is_pointer == IS_PTR_TRUE) {
+            printf("is_pointer=true, ");
+        } else if (p->is_pointer == IS_PTR_FALSE) {
+            printf("is_pointer=false, ");
+        } else {
+            printf("is_pointer=unknown, ");
         }
 
         printf("value_range=[");

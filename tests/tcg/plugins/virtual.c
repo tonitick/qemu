@@ -26,6 +26,7 @@ int isdigit(int c);
 #include "json_parse.h"
 #include "path_logger.h"
 #include "capstone_util.h"
+#include "struct_recovery.h"
 
 #define MAX_ENTRIES 1024
 #define MAX_LINE_LEN 128
@@ -494,7 +495,7 @@ static void raiseirq(unsigned int cpu_index, void *udata);
 static void updatepc(unsigned int cpu_index, void *udata);
 static void updatereg(unsigned int cpu_index, void *udata);
 static void updatemem(unsigned int cpu_index, void *udata);
-static void randstate(unsigned int cpu_index, void *udata);
+// static void randstate(unsigned int cpu_index, void *udata);
 static void randargs(unsigned int cpu_index, void *udata);
 static void logrets(unsigned int cpu_index, void *udata);
 static void clearpathlogs(unsigned int cpu_index, void *udata);
@@ -538,7 +539,7 @@ cb_entry_t cb_registry[] = {
     { "updatepc", updatepc },
 	{ "updatereg", updatereg},
 	{ "updatemem", updatemem},
-	{ "randstate", randstate},
+	// { "randstate", randstate},
     { "randargs", randargs },
     { "logrets", logrets},
     { "clearpathlogs", clearpathlogs},
@@ -775,30 +776,30 @@ uint32_t get_random_word(void) {
 }
 
 
-static void randstate(unsigned int cpu_index, void *udata) {
-	const char *input = (const char *) udata;
+// static void randstate(unsigned int cpu_index, void *udata) {
+// 	const char *input = (const char *) udata;
 
-	size_t count = 0;
-	unsigned long long *addrs = parse_addresses(input, &count);
-	if (addrs) {
-        for (size_t i = 0; i < count; i++) {
-			if (addrs[i] < 100) {
-				uint32_t val = get_random_word();
-				//PC not supported 
-				if (addrs[i] != 15) {
-					qemu_plugin_set_register((uint8_t *)&val,addrs[i] );
-				}
-			} else {
-				uint8_t val = get_random_byte();
-				qemu_plugin_write_memory(addrs[i], &val, 1);
-			}
-        }
-        free(addrs);
-    } else {
-        printf("Failed to parse addresses.\n");
-    }
+// 	size_t count = 0;
+// 	unsigned long long *addrs = parse_addresses(input, &count);
+// 	if (addrs) {
+//         for (size_t i = 0; i < count; i++) {
+// 			if (addrs[i] < 100) {
+// 				uint32_t val = get_random_word();
+// 				//PC not supported 
+// 				if (addrs[i] != 15) {
+// 					qemu_plugin_set_register((uint8_t *)&val,addrs[i] );
+// 				}
+// 			} else {
+// 				uint8_t val = get_random_byte();
+// 				qemu_plugin_write_memory(addrs[i], &val, 1);
+// 			}
+//         }
+//         free(addrs);
+//     } else {
+//         printf("Failed to parse addresses.\n");
+//     }
 
-}
+// }
 
 float get_random_float(float min, float max);
 float get_random_float(float min, float max) {
@@ -818,7 +819,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     //     exit(0);
     // }
     if (check_path_log_size_and_dump(dump_path)) {
-        printf("log size reach 100, dump related path logs\n");
+        printf("[VI randargs] log size reach 100, dump related path logs\n");
         exit(0);
     }
     if (cur_iteration == 0) {
@@ -836,7 +837,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
     is_logging_valid = true;
     cur_iteration++;
-    printf("randargs iteration %d:\n", cur_iteration);
+    printf("[VI randargs] iteration %d:\n", cur_iteration);
     // iterate arg_settings
     for (size_t i = 0; i < arg_count; i++) {
         ArgSetting *setting = &arg_settings[i];
@@ -846,7 +847,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
             // treat as uint32 first
             // value_count shoule be 0
             if (setting->value_count != 0) {
-                fprintf(stderr, "Invalid value count for unknown type in setting '%s'\n", setting->name);
+                fprintf(stderr, "[VI randargs] Invalid value count for unknown type in setting '%s'\n", setting->name);
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
@@ -869,7 +870,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 // Generate a random float in the range
                 value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
             } else {
-                fprintf(stderr, "Invalid value count for float type in setting '%s'\n", setting->name);
+                fprintf(stderr, "[VI randargs] Invalid value count for float type in setting '%s'\n", setting->name);
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
@@ -880,35 +881,42 @@ static void randargs(unsigned int cpu_index, void *udata) {
             else if (setting->value_count == 2) {
                 // Generate a random uint32 in the range
                 value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+            } else if (setting->value_count == 0 && setting->is_pointer == IS_PTR_TRUE) { // check is_pointer here
+                // handle struct allocation
+                setting->value_count = 1;
+                setting->value_range[0].u32 = cur_ptr_addr;
+                assert(setting->sz == 4); // 4 bytes addr size in arm
+                struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, setting->sz);
+                cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
+                allocated_structs[allocated_struct_count++] = new_struct;
+                value.u32 = setting->value_range[0].u32;
             } else {
-                fprintf(stderr, "Invalid value count for uint32 type in setting '%s'\n", setting->name);
+                fprintf(stderr, "[VI randargs] Invalid value count for uint32 type in setting '%s'\n", setting->name);
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
         } else {
-            fprintf(stderr, "Unsupported value type in setting '%s'\n", setting->name);
+            fprintf(stderr, "[VI randargs] Unsupported value type in setting '%s'\n", setting->name);
             perror("randargs");
             exit(EXIT_FAILURE);
         }
 
         if (setting->location_type == TYPE_REG) {
-            // printf("randargs - setting register %s to value: %u\n", setting->reg, value.u32);
             if (setting->vtype == TYPE_FLOAT) {
-                printf("randargs - setting register %s to value: %g\n", setting->reg, value.f);
+                printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.f);
             } else {
-                printf("randargs - setting register %s to value: %u\n", setting->reg, value.u32);
+                printf("[VI randargs] setting register %s to value: %u\n", setting->reg, value.u32);
             }
             qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
         } else if (setting->location_type == TYPE_ADDR) {
-            // printf("randargs - writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
             if (setting->vtype == TYPE_FLOAT) {
-                printf("randargs - writing value %g to memory address: 0x%lx\n", value.f, setting->addr);
+                printf("[VI randargs] writing value %g to memory address: 0x%lx\n", value.f, setting->addr);
             } else {
-                printf("randargs - writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+                printf("[VI randargs] writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
             }
             qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
         } else {
-            fprintf(stderr, "Unsupported location type in setting '%s'\n", setting->name);
+            fprintf(stderr, "[VI randargs] Unsupported location type in setting '%s'\n", setting->name);
             perror("randargs");
             exit(EXIT_FAILURE);
         }
@@ -921,7 +929,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 static void logrets(unsigned int cpu_index, void *udata) {
     // This function is called when the magic instruction is executed
     // It will dump the latest return values to the log buffer
-    printf("logrets called, dumping latest return values.\n");
+    printf("[VI logrets] logrets called, dumping latest return values.\n");
     for (size_t i = 0; i < ret_count; i++) {
         RetSetting *setting = &ret_settings[i];
         ValueUnion value;
@@ -930,21 +938,21 @@ static void logrets(unsigned int cpu_index, void *udata) {
             value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
             if (setting->vtype == TYPE_FLOAT) {
                 // value.f = qemu_get_register(get_reg_by_name(setting->reg));
-                printf("logrets - register %s: %g\n", setting->reg, value.f);
+                printf("[VI logrets] register %s: %g\n", setting->reg, value.f);
             } else {
                 // value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
-                printf("logrets - register %s: %u\n", setting->reg, value.u32);
+                printf("[VI logrets] register %s: %u\n", setting->reg, value.u32);
             }
         } else if (setting->location_type == TYPE_ADDR) {
             // Log memory value
             qemu_plugin_read_memory(setting->addr, (uint8_t *)&value, 4);
             if (setting->vtype == TYPE_FLOAT) {
-                printf("logrets - memory address 0x%lx: %g\n", setting->addr, value.f);
+                printf("[VI logrets] memory address 0x%lx: %g\n", setting->addr, value.f);
             } else {
-                printf("logrets - memory address 0x%lx: %u\n", setting->addr, value.u32);
+                printf("[VI logrets] memory address 0x%lx: %u\n", setting->addr, value.u32);
             }
         } else {
-            fprintf(stderr, "Unsupported location type in setting '%s'\n", setting->name);
+            fprintf(stderr, "[VI logrets] Unsupported location type in setting '%s'\n", setting->name);
             perror("logrets");
             exit(EXIT_FAILURE);
         }
@@ -959,12 +967,21 @@ static void clearpathlogs(unsigned int cpu_index, void *udata) {
     clear_all_path_logs();
 }
 
+static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+    unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
+    unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
+    int is_store = qemu_plugin_mem_is_store(info);
+    fprintf(stdout, "[MEMCB update_addr_var_mem_cb] %s %u-byte @ 0x%08" PRIx64 "\n",
+            is_store ? "STORE" : "LOAD", sz_bytes, vaddr);
+    // TODO: finish the impl
+}
+
 static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                    qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
     unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
     unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
     int is_store = qemu_plugin_mem_is_store(info);
-    fprintf(stderr, "[update_float_addr_var_mem_cb] %s %u-bit @ 0x%08" PRIx64 "\n",
+    fprintf(stdout, "[MEMCB update_float_addr_var_mem_cb] %s %u-bit @ 0x%08" PRIx64 "\n",
             is_store ? "STORE" : "LOAD", 8u << sz_shift, vaddr);
     /* optional: value seen */
     // qemu_plugin_mem_value val = qemu_plugin_mem_get_value(info);
@@ -972,13 +989,18 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     // check whether the address is in arg_settings
     if (sz_bytes == 4 && !is_store) { // only handle 32-bit loads
         // Iterate through arg_settings to find a match
+        int found_arg_match = 0;
         for (size_t i = 0; i < arg_count; i++) {
             ArgSetting *setting = &arg_settings[i];
-            if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+            // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+            if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
+                found_arg_match = 1;
                 // We have a match, update the arg setting
-                if (setting->vtype != TYPE_FLOAT) {
+                if (setting->vtype != TYPE_FLOAT) { // fix type if not float
                     // update to float
                     setting->vtype = TYPE_FLOAT;
+                    setting->sz = 4;
+                    setting->is_pointer = IS_PTR_FALSE;
                     setting->value_count = 2; // single value
                     setting->value_range[0].f = 0.5f;
                     setting->value_range[1].f = 5.0f; // defaut range [0.5, 5.0]
@@ -1000,7 +1022,45 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 }
             }
         }
+        if (!found_arg_match) {
+            printf("[MEMCB update_float_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
+            // TODO: create new arg setting
+            if (arg_count >= MAX_ARGS) {
+                fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
+                exit(EXIT_FAILURE);
+            }
+            int parent_allocated_struct_idx = find_parent_struct_by_addr(vaddr, sz_bytes);
+            if (parent_allocated_struct_idx >= 0) {
+                assert(parent_allocated_struct_idx < allocated_struct_count);
+                unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
+                printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
+                assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
+                size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
+                int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
+                assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
+
+                // create new arg setting based on parent
+                size_t offset = vaddr - parent_allocated_addr;
+                ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
+                ArgSetting *new_setting = &arg_settings[arg_count++];
+                snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
+                new_setting->location_type = TYPE_ADDR;
+                new_setting->addr = vaddr;
+                new_setting->sz = 4;
+                new_setting->vtype = TYPE_FLOAT;
+                new_setting->is_pointer = IS_PTR_FALSE; // TODO: handle nested structs
+                new_setting->value_count = 2;
+                new_setting->value_range[0].f = 0.5f;
+                new_setting->value_range[1].f = 5.0f; // defaut range [0.5, 5.0]
+
+                is_logging_valid = false;
+                printf("[MEMCB update_float_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+            }
+            // ArgSetting *new_setting = &arg_settings[arg_count++];
+            printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
+        }
     }
+    // TODO: handle double here
 }
 
 static void logbbstart(unsigned int cpu_index, void *udata) {
@@ -1088,7 +1148,7 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
     size_t i;
 	UpdateEntry *matches[MAX_MATCHES];
 
-	printf("->Virtual Clock: %llu \n", (unsigned long long)qemu_plugin_get_virtual_timer());
+	// printf("->Virtual Clock: %llu \n", (unsigned long long)qemu_plugin_get_virtual_timer());
 
 
     csh cshandle;
@@ -1192,14 +1252,16 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             }
         }
 
-        // zz: hanlde dynamic float identification before VI (rand_args)
+        // [zz] moemory callbacks after VI for:
+        //      (1) dynamic struct field identification
+        //      (2) dynamic variable type identification (float vs int)
         size_t inst_len = qemu_plugin_insn_size(insn);
         GByteArray *inst_bytes = g_byte_array_sized_new(inst_len);
         g_byte_array_set_size(inst_bytes, inst_len);
         size_t copied = qemu_plugin_insn_data(insn, inst_bytes->data, inst_len);
         uint64_t insn_addr = qemu_plugin_insn_vaddr(insn);
 
-        printf("[instr] 0x%08lx: ", (unsigned long)insn_addr);
+        printf("[INSTALL instr] 0x%08lx: ", (unsigned long)insn_addr);
         for (size_t b = 0; b < copied; b++) {
             printf("%02x ", inst_bytes->data[b]);
         }
@@ -1209,18 +1271,21 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         cs_disasm_count = cs_disasm(
             cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
         if (cs_disasm_count > 0) {
-            printf("[disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
-            // check if the instructino access memory
-            // if (arm_insn_accesses_mem(csinsn)) {
-            //     printf("    [mem] instruction accesses memory\n");
-            // }
+            // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
+            printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
             if (arm_insn_is_fp_mem_access(csinsn)) {
-                // printf("    [mem] float instruction accesses floating point memory\n");
+                printf("    [INSTALL mem] float instruction accesses floating point memory\n");
                 qemu_plugin_register_vcpu_mem_cb(insn, update_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, NULL);
             }
+            // check if the instructino access memory
+            else if (arm_insn_accesses_mem(csinsn)) {
+                printf("    [INSTALL mem] instruction accesses memory\n");
+                qemu_plugin_register_vcpu_mem_cb(insn, update_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, NULL);
+            }
+
 
         } else {
-            printf("[disas] <disas error>\n");
+            printf("[INSTALL disas] <disas error>\n");
         }
         g_byte_array_free(inst_bytes, TRUE);
 
@@ -1231,23 +1296,23 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 		for (size_t match_idx = 0; match_idx < count; ++match_idx) {
 			UpdateEntry *e = matches[match_idx];
 
-			printf("  Update Point: 0x%lx, ", e->update_point);
+			printf("[INSTALL modifier] Update Point: 0x%lx, ", e->update_point);
 	        if (e->type == TARGET_REGISTER || e->type == TARGET_DEREF) {
-    	        printf("Target: r%d, ", e->target.reg_num);
-				qemu_plugin_u64 entry;
+                printf("[INSTALL modifier] Target: r%d, ", e->target.reg_num);
+                qemu_plugin_u64 entry;
                 // In TCG frontend it is already set, if you want to modify it you will have to
                 // change CPSR.
                 entry.offset = (size_t)(e->value.imm);
-				entry.data = (void *)e;
+                entry.data = (void *)e;
                 qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_REG, entry, e->target.reg_num);
-	        } else if (e->type == TARGET_MEMORY) {
-				printf("Target: r%d, ", e->target.reg_num);
+           } else if (e->type == TARGET_MEMORY) {
+                printf("[INSTALL modifier] Target: r%d, ", e->target.reg_num);
                 qemu_plugin_u64 entry;
                 // In TCG frontend it is already set, if you want to modify it you will have to
                 // change CPSR.
                 entry.offset = (size_t)(e->value.imm);
                 qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_MEM, entry, e->target.addr);
-    	        printf("Target: 0x%lx, ", e->target.addr);
+                printf("[INSTALL modifier] Target: 0x%lx, ", e->target.addr);
        		}
 
     	}
@@ -1263,6 +1328,9 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
                 qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_REG, entry, 15);
         }
     }
+
+    printf("---- Finished translating TB at 0x%llx with %zu instructions ----\n",
+           (unsigned long long)qemu_plugin_tb_vaddr(tb), n);
 }
 
 static void plugin_exit(qemu_plugin_id_t id, void *p)

@@ -2,19 +2,13 @@
   "this": {
     "reg": "r0",
     "type": "uint32",
-    "value_range": [536870944]
-  },
-  "v0": {
-    "addr": 536870944,
-    "type": "unknown"
-  },
-  "v1": {
-    "addr": 536870948,
-    "type": "unknown"
+    "is_pointer": "true",
+    "size": 4
   },
   "b": {
     "reg": "s0",
     "type": "float",
+    "size": 4,
     "value_range": [0.1, 5.0]
   }
 }
