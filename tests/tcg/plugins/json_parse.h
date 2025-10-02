@@ -112,7 +112,7 @@ int find_ptr_arg_by_addr(unsigned long addr, size_t sz) {
         //         return (int)i;
         //     }
         // }
-        if (s->is_pointer == IS_PTR_TRUE && s->vtype == TYPE_UINT32 && s->value_count == 1) {
+        if ((s->is_pointer == IS_PTR_TRUE || s->is_pointer == IS_PTR_UNKNOWN) && s->vtype == TYPE_UINT32 && s->value_count == 1) {
             if (addr == s->value_range[0].u32 && sz == s->sz) {
                 return (int)i;
             }
@@ -191,6 +191,8 @@ void parse_arg_settings(const char *json)
                 s->is_pointer = IS_PTR_TRUE;
             } else if (strcmp(is_ptr->valuestring, "false") == 0) {
                 s->is_pointer = IS_PTR_FALSE;
+            } else if (strcmp(is_ptr->valuestring, "unknown") == 0) {
+                s->is_pointer = IS_PTR_UNKNOWN;
             } else {
                 // s->is_pointer = IS_PTR_UNKNOWN;
                 fprintf(stderr, "Unsupported is_pointer value '%s' in '%s'\n", is_ptr->valuestring, s->name);

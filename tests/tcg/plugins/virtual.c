@@ -826,15 +826,36 @@ static void randargs(unsigned int cpu_index, void *udata) {
         // clear path logs
         clear_all_path_logs();
     }
-    else {
+    else if (is_logging_valid) {
         // log previous iteration values
-        if (is_logging_valid) {
-            record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
-        }
+        // if (is_logging_valid) {
+        record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+        // }
         // clear
-        current_path_len = 0;
+        // current_path_len = 0;
     }
+    else if (!is_logging_valid) {
+        // dump arg settings for debugging
+        printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
+        dump_arg_settings();
+        // fix all unknown pointer args to non-pointer integers
+        // TODO: take care of the control flows, assume the same path for now
+        for (size_t i = 0; i < arg_count; i++) {
+            ArgSetting *setting = &arg_settings[i];
+            if (setting->vtype == TYPE_UINT32 && setting->is_pointer == IS_PTR_UNKNOWN) {
+                // set arg
+                printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer\n", setting->name);
+                setting->is_pointer = IS_PTR_FALSE;
+                setting->vtype = TYPE_UINT32;
+                setting->value_count = 2;
+                setting->value_range[0].u32 = 0;
+                setting->value_range[1].u32 = 10; // default range [0, 10]
+            }
+        }
+    }
+    current_path_len = 0;
 
+    // TODO: only re-assign variables for int types that are non
     is_logging_valid = true;
     cur_iteration++;
     printf("[VI randargs] iteration %d:\n", cur_iteration);
@@ -886,7 +907,19 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 setting->value_count = 1;
                 setting->value_range[0].u32 = cur_ptr_addr;
                 assert(setting->sz == 4); // 4 bytes addr size in arm
-                struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, setting->sz);
+                struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, setting->sz, true);
+                cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
+                allocated_structs[allocated_struct_count++] = new_struct;
+                value.u32 = setting->value_range[0].u32;
+            }
+            else if (setting->value_count == 0 && setting->is_pointer == IS_PTR_UNKNOWN) {
+                // treat as pointer first
+                // setting->is_pointer = IS_PTR_TRUE;
+                // handle struct allocation
+                setting->value_count = 1;
+                setting->value_range[0].u32 = cur_ptr_addr;
+                assert(setting->sz == 4); // 4 bytes addr size in arm
+                struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, setting->sz, false);
                 cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
                 allocated_structs[allocated_struct_count++] = new_struct;
                 value.u32 = setting->value_range[0].u32;
@@ -973,7 +1006,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
     int is_store = qemu_plugin_mem_is_store(info);
     fprintf(stdout, "[MEMCB update_addr_var_mem_cb] %s %u-byte @ 0x%08" PRIx64 "\n",
             is_store ? "STORE" : "LOAD", sz_bytes, vaddr);
-    // TODO: finish the impl
+    // TODO: handle non-fp memory variables
 }
 
 static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
@@ -989,12 +1022,12 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     // check whether the address is in arg_settings
     if (sz_bytes == 4 && !is_store) { // only handle 32-bit loads
         // Iterate through arg_settings to find a match
-        int found_arg_match = 0;
+        bool found_arg_match = false;
         for (size_t i = 0; i < arg_count; i++) {
             ArgSetting *setting = &arg_settings[i];
             // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
             if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
-                found_arg_match = 1;
+                found_arg_match = true;
                 // We have a match, update the arg setting
                 if (setting->vtype != TYPE_FLOAT) { // fix type if not float
                     // update to float
@@ -1024,7 +1057,7 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
         }
         if (!found_arg_match) {
             printf("[MEMCB update_float_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
-            // TODO: create new arg setting
+            // create new arg setting
             if (arg_count >= MAX_ARGS) {
                 fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
                 exit(EXIT_FAILURE);
@@ -1034,14 +1067,17 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 assert(parent_allocated_struct_idx < allocated_struct_count);
                 unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
                 printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
-                assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
+                // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
                 size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
                 int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
                 assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
+                struct NestedStruct *parent_struct = allocated_structs[parent_allocated_struct_idx];
+                parent_struct->is_pointer = IS_PTR_TRUE; // mark as pointer
 
                 // create new arg setting based on parent
                 size_t offset = vaddr - parent_allocated_addr;
                 ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
+                parent_setting->is_pointer = IS_PTR_TRUE; // mark as pointer
                 ArgSetting *new_setting = &arg_settings[arg_count++];
                 snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
                 new_setting->location_type = TYPE_ADDR;

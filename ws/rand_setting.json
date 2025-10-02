@@ -2,7 +2,7 @@
   "this": {
     "reg": "r0",
     "type": "uint32",
-    "is_pointer": "true",
+    "is_pointer": "unknown",
     "size": 4
   },
   "b": {
