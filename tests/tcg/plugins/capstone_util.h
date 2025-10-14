@@ -15,7 +15,7 @@ int arm_insn_accesses_mem(const cs_insn *ins) {
 
     // also treat PUSH/POP/LDM/STM as memory (Capstone may encode via regs)
     switch (ins->id) {
-    case ARM_INS_PUSH: case ARM_INS_POP:
+    // case ARM_INS_PUSH: case ARM_INS_POP: # zz: not handle stack for now
     case ARM_INS_LDM:  case ARM_INS_LDMDA: case ARM_INS_LDMDB: case ARM_INS_LDMIB:
     case ARM_INS_STM:  case ARM_INS_STMDA: case ARM_INS_STMDB: case ARM_INS_STMIB:
         return 1;

@@ -5,7 +5,7 @@
 
 
 #define STRUCT_MEM_SIZE 512
-unsigned long cur_ptr_addr = 0x20000020; // pointer assignment start at 0x20000020
+unsigned long cur_ptr_addr = 0x30000020; // pointer assignment start at 0x20000020
 
 #define MAX_NESTED_FIELDS 100
 struct NestedStruct {

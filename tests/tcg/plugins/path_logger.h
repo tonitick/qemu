@@ -12,10 +12,10 @@
 
 
 /* ---------- log buffers ---------- */
-#define MAX_PER_ARG 1000
+#define MAX_PER_PATH_LOG_SIZE 100
 typedef struct {
     size_t count;
-    union { float f[MAX_PER_ARG]; uint32_t u32[MAX_PER_ARG]; } data;
+    union { float f[MAX_PER_PATH_LOG_SIZE]; uint32_t u32[MAX_PER_PATH_LOG_SIZE]; } data;
 } ArgValueLogs;
 typedef ArgValueLogs RetValueLogs;
 
@@ -71,7 +71,7 @@ void record_trace_values(const uint64_t *seq, size_t len,
 
     for (size_t i = 0; i < arg_count; ++i) {
         ArgValueLogs *L = &e->args[i];
-        if (L->count >= MAX_PER_ARG) continue;
+        if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (arg_settings[i].vtype == TYPE_FLOAT)
             L->data.f[L->count++] = arg_vals[i].f;
         else
@@ -79,7 +79,7 @@ void record_trace_values(const uint64_t *seq, size_t len,
     }
     for (size_t i = 0; i < ret_count; ++i) {
         RetValueLogs *L = &e->rets[i];
-        if (L->count >= MAX_PER_ARG) continue;
+        if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (ret_settings[i].vtype == TYPE_FLOAT)
             L->data.f[L->count++] = ret_vals[i].f;
         else
@@ -128,30 +128,47 @@ void dump_all_path_logs(void)
     }
 }
 
-int check_path_log_size_and_dump(char* dump_path); // TODO: dump all path logs
-int check_path_log_size_and_dump(char* dump_path) { // TODO: dump all path logs
-    // if a path log size reach 100, dump the related path logs
-    int max_log_size = 10;
+// #define MAX_PER_PATH_LOG_SIZE 100
+int check_path_log_size_and_dump(char* dump_dir); // TODO: dump all path logs
+int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
+    // if all path log size reach MAX_PER_PATH_LOG_SIZE, dump the related path logs
     Entry *e, *tmp;
 
-    FILE *f = fopen(dump_path, "w");
-    if (!f) {
-        perror("fopen dump_path");
-        exit(1);
-    }
+    // FILE *f = fopen(dump_path, "w");
+    // if (!f) {
+    //     perror("fopen dump_path");
+    //     exit(1);
+    // }
 
+    int num_path_log_ready = 0;
+    int total_paths = 0;
     HASH_ITER(hh, g_map, e, tmp) {
-        bool need_dump = false;
+        total_paths++;
+        // bool need_dump = false;
         for (size_t i = 0; i < arg_count; ++i) {
-            if (e->args[i].count >= max_log_size) {
-                need_dump = true;
+            if (e->args[i].count >= MAX_PER_PATH_LOG_SIZE) {
+                // need_dump = true;
+                num_path_log_ready++;
                 break;
             }
         }
-        if (need_dump) {
+    }
+    if (num_path_log_ready && (num_path_log_ready == total_paths)) {
+        // dump all path logs
+        int path_id = 0;
+        HASH_ITER(hh, g_map, e, tmp) {
+            char filepath[256];
+            snprintf(filepath, sizeof(filepath), "%s/path_id_%d_len_%zu.txt", dump_dir, path_id++, e->len);
+            FILE *f = fopen(filepath, "w");
+            if (!f) {
+                perror("fopen");
+                continue;
+            }
+
+            // dump the entry
             printf("Dumping path log for trace len=%zu:", e->len);
             for (size_t i = 0; i < e->len; ++i)
-                printf(" 0x%016" PRIx64, e->key[i]);
+                printf(" 0x%08" PRIx64, e->key[i]);
             putchar('\n');
 
             for (size_t i = 0; i < arg_count; ++i) {
@@ -177,17 +194,67 @@ int check_path_log_size_and_dump(char* dump_path) { // TODO: dump all path logs
                     fprintf(f, "\n");
                 }
             }
-            // after dump, clear the entry
-            HASH_DEL(g_map, e); 
-            free(e->key); 
-            free(e);
-            return 1; // dumped one entry
         }
+        return 1; // success
     }
-    fclose(f);
-    return 0; // no entry dumped
+
+    return 0; // not enough path logs
 }
 
+void dump_existing_path_logs(char* dump_dir);
+void dump_existing_path_logs(char* dump_dir) {
+    // dump all existing path logs with size > MAX_PER_PATH_LOG_SIZE / 2
+    Entry *e, *tmp;
+    int path_id = 0;
+    HASH_ITER(hh, g_map, e, tmp) {
+        bool need_dump = false;
+        for (size_t i = 0; i < arg_count; ++i) {
+            if (e->args[i].count >= MAX_PER_PATH_LOG_SIZE / 2) {
+                need_dump = true;
+                break;
+            }
+        }
+        if (need_dump) {
+            char filepath[256];
+            snprintf(filepath, sizeof(filepath), "%s/path_id_%d_len_%zu.txt", dump_dir, path_id++, e->len);
+            FILE *f = fopen(filepath, "w");
+            if (!f) {
+                perror("fopen");
+                continue;
+            }
+
+            // dump the entry
+            printf("Dumping path log for trace len=%zu:", e->len);
+            for (size_t i = 0; i < e->len; ++i)
+                printf(" 0x%08" PRIx64, e->key[i]);
+            putchar('\n');
+
+            for (size_t i = 0; i < arg_count; ++i) {
+                if (arg_settings[i].vtype == TYPE_FLOAT) {
+                    printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+                    fprintf(f, "[IN] %s: ", arg_settings[i].name);
+                    for (size_t j = 0; j < e->args[i].count; ++j) {
+                        printf("       %g\n", e->args[i].data.f[j]);
+                        fprintf(f, "%.10f ", e->args[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+            }
+
+            for (size_t i = 0; i < ret_count; ++i) {
+                if (ret_settings[i].vtype == TYPE_FLOAT) {
+                    printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
+                    fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                    for (size_t j = 0; j < e->rets[i].count; ++j) {
+                        printf("       %g\n", e->rets[i].data.f[j]);
+                        fprintf(f, "%.10f ", e->rets[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+            }
+        }
+    }
+}
 
 void clear_all_path_logs(void);
 void clear_all_path_logs(void)

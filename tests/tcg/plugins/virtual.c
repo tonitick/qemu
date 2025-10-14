@@ -809,22 +809,27 @@ float get_random_float(float min, float max) {
 }
 
 static int cur_iteration = 0;
+#define MAX_FUZZ_ITERATIONS 10000000
 static void randargs(unsigned int cpu_index, void *udata) {
     // printf("randargs - results for iteration %d:\n", cur_iteration);
-    // dump_latest_ret_values();
-    // if (cur_iteration >= 6) { // run 3 iterations
-    //     printf("randargs iteration %d limit reached, dump values and exit.\n", cur_iteration);
-    //     // dump_ret_values();
-    //     dump_all_path_logs();
-    //     exit(0);
-    // }
+    if (cur_iteration >= MAX_FUZZ_ITERATIONS) {
+        printf("[VI randargs] reached max fuzzing iterations %d, dump existing path logs andexiting\n", MAX_FUZZ_ITERATIONS);
+        dump_existing_path_logs(dump_path);
+        exit(0);
+    }
     if (check_path_log_size_and_dump(dump_path)) {
-        printf("[VI randargs] log size reach 100, dump related path logs\n");
+        printf("[VI randargs] log finished, dump related path logs\n");
+        dump_all_path_logs();
         exit(0);
     }
     if (cur_iteration == 0) {
         // clear path logs
         clear_all_path_logs();
+        // set non_ptr_iters to 0 for all args
+        for (size_t i = 0; i < arg_count; i++) {
+            ArgSetting *setting = &arg_settings[i];
+            setting->non_ptr_iters = 0;
+        }
     }
     else if (is_logging_valid) {
         // log previous iteration values
@@ -835,24 +840,52 @@ static void randargs(unsigned int cpu_index, void *udata) {
         // current_path_len = 0;
     }
     else if (!is_logging_valid) {
+        clear_all_path_logs(); // zz: log only when arg settings can stably generate valid logs
+        // printf("[VI randargs] dump path log after clear:\n");
+        // dump_all_path_logs();
+
         // dump arg settings for debugging
         printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
         dump_arg_settings();
         // fix all unknown pointer args to non-pointer integers
         // TODO: take care of the control flows, assume the same path for now
-        for (size_t i = 0; i < arg_count; i++) {
-            ArgSetting *setting = &arg_settings[i];
-            if (setting->vtype == TYPE_UINT32 && setting->is_pointer == IS_PTR_UNKNOWN) {
-                // set arg
-                printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer\n", setting->name);
-                setting->is_pointer = IS_PTR_FALSE;
-                setting->vtype = TYPE_UINT32;
-                setting->value_count = 2;
-                setting->value_range[0].u32 = 0;
-                setting->value_range[1].u32 = 10; // default range [0, 10]
+    }
+
+    // increment non_ptr_iters for all unknown pointer args
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *setting = &arg_settings[i];
+        if (setting->vtype == TYPE_UINT32 && setting->is_pointer == IS_PTR_UNKNOWN) {
+            setting->non_ptr_iters++;
+            printf("[VI randargs] unknown pointer arg '%s' has been tried %d times\n", setting->name, setting->non_ptr_iters);
+            if (setting->non_ptr_iters > NON_PTR_ITER_MAX) {
+                printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer after %d tries\n", setting->name, setting->non_ptr_iters);
+                if (setting->location_type == TYPE_ADDR) {
+                    // set to float
+                    setting->is_pointer = IS_PTR_FALSE;
+                    setting->vtype = TYPE_FLOAT;
+                    setting->value_count = 2;
+                    setting->value_range[0].f = 0.5;
+                    setting->value_range[1].f = 5.0; // default range [0.5, 5.0]
+
+                    clear_all_path_logs();
+                }
+                else {
+                    // error
+                    fprintf(stderr, "[VI randargs] Cannot fix unknown pointer arg '%s' with location type %d\n", setting->name, setting->location_type);
+                    exit(EXIT_FAILURE);
+                }
             }
+
+            // set arg
+            // printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer\n", setting->name);
+            // setting->is_pointer = IS_PTR_FALSE;
+            // setting->vtype = TYPE_UINT32;
+            // setting->value_count = 2;
+            // setting->value_range[0].u32 = 0;
+            // setting->value_range[1].u32 = 2; // default range [0, 2]
         }
     }
+
     current_path_len = 0;
 
     // TODO: only re-assign variables for int types that are non
@@ -876,10 +909,10 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
             // perror("randargs");
             // exit(EXIT_FAILURE);
-            // use default [0, 10]
+            // use default [0, 2]
             setting->value_count = 2;
             setting->value_range[0].u32 = 0;
-            setting->value_range[1].u32 = 10;
+            setting->value_range[1].u32 = 2;
             value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
         }
         if (setting->vtype == TYPE_FLOAT) {
@@ -928,9 +961,22 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
+        } else if (setting->vtype == TYPE_UINT16 || setting->vtype == TYPE_UINT8) {
+            if (setting->value_count == 1) {
+                value.u32 = setting->value_range[0].u32;
+            }
+            else if (setting->value_count == 2) {
+                // Generate a random uint32 in the range
+                value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+            }
+            else {
+                fprintf(stderr, "[VI randargs] Invalid value count for uint8/16 type in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
+            }
         } else {
             fprintf(stderr, "[VI randargs] Unsupported value type in setting '%s'\n", setting->name);
-            perror("randargs");
+            // perror("randargs");
             exit(EXIT_FAILURE);
         }
 
@@ -1007,6 +1053,79 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
     fprintf(stdout, "[MEMCB update_addr_var_mem_cb] %s %u-byte @ 0x%08" PRIx64 "\n",
             is_store ? "STORE" : "LOAD", sz_bytes, vaddr);
     // TODO: handle non-fp memory variables
+    // check whether the address is in arg_settings
+    // Iterate through arg_settings to find a match
+    bool found_arg_match = false;
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *setting = &arg_settings[i];
+        // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+        if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
+            found_arg_match = true;
+        }
+    }
+    if (!found_arg_match) {
+        printf("[MEMCB update_float_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
+        // create new arg setting
+        if (arg_count >= MAX_ARGS) {
+            fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
+            exit(EXIT_FAILURE);
+        }
+        int parent_allocated_struct_idx = find_parent_struct_by_addr(vaddr, sz_bytes);
+        if (parent_allocated_struct_idx >= 0) {
+            assert(parent_allocated_struct_idx < allocated_struct_count);
+            unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
+            printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
+            // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
+            size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
+            int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
+            assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
+            struct NestedStruct *parent_struct = allocated_structs[parent_allocated_struct_idx];
+            parent_struct->is_pointer = IS_PTR_TRUE; // mark as pointer
+
+            // create new arg setting based on parent
+            size_t offset = vaddr - parent_allocated_addr;
+            ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
+            parent_setting->is_pointer = IS_PTR_TRUE; // mark as pointer
+            ArgSetting *new_setting = &arg_settings[arg_count++];
+            snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
+            new_setting->location_type = TYPE_ADDR;
+            new_setting->addr = vaddr;
+            new_setting->sz = sz_bytes;
+            // new_setting->vtype = TYPE_FLOAT;
+            if (sz_bytes == 4) {
+                new_setting->vtype = TYPE_UINT32; // treat as (unknown) pointer first
+                new_setting->is_pointer = IS_PTR_UNKNOWN;
+                new_setting->non_ptr_iters = 0;
+                // handle struct allocation
+                new_setting->value_count = 1;
+                new_setting->value_range[0].u32 = cur_ptr_addr;
+                assert(new_setting->sz == 4); // 4 bytes addr size in arm
+                struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, new_setting->sz, false);
+                cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
+                allocated_structs[allocated_struct_count++] = new_struct;
+            } else if (sz_bytes == 2) {
+                new_setting->vtype = TYPE_UINT16; // must be int
+                new_setting->is_pointer = IS_PTR_FALSE; // 2-byte int not pointer
+                new_setting->value_count = 2;
+                new_setting->value_range[0].u32 = 0;
+                new_setting->value_range[1].u32 = 2; // default range [0, 2]
+            } else if (sz_bytes == 1) {
+                new_setting->vtype = TYPE_UINT8; // must be int
+                new_setting->is_pointer = IS_PTR_FALSE; // 1-byte int not pointer
+                new_setting->value_count = 2;
+                new_setting->value_range[0].u32 = 0;
+                new_setting->value_range[1].u32 = 2; // default range [0, 2]
+            } else {
+                fprintf(stderr, "Unsupported size %u bytes for new arg setting at address 0x%lx\n", sz_bytes, vaddr);
+                exit(EXIT_FAILURE);
+            }
+
+            is_logging_valid = false;
+            printf("[MEMCB update_float_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+        }
+        // ArgSetting *new_setting = &arg_settings[arg_count++];
+        printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
+    }
 }
 
 static void update_float_addr_var_mem_cb(unsigned int vcpu_index,

@@ -55,7 +55,7 @@ char *read_json_file(const char *path)
 
 #define MAX_NAME  32
 #define MAX_REG    8
-#define MAX_ARGS  32          /* maximum distinct argument objects */
+#define MAX_ARGS  100          /* maximum distinct argument objects */
 
 
 typedef enum {
@@ -66,7 +66,10 @@ typedef enum {
 typedef enum {
     TYPE_UNKNOWN,
     TYPE_FLOAT,
-    TYPE_UINT32
+    TYPE_DOUBLE,
+    TYPE_UINT32,
+    TYPE_UINT16,
+    TYPE_UINT8,
 } IOValueType;
 
 typedef enum {
@@ -85,6 +88,7 @@ typedef union {
 /* -------------------------------------------------------------------------- */
 /* Data structure describing one argument                                     */
 /* -------------------------------------------------------------------------- */
+#define NON_PTR_ITER_MAX 50
 typedef struct {
     char name[MAX_NAME];
 
@@ -99,6 +103,8 @@ typedef struct {
     IOValueType vtype;
     ValueUnion value_range[2]; /* one- or two-element range */
     size_t value_count;
+
+    int non_ptr_iters; /* iterator for non-pointer values */
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
@@ -278,6 +284,14 @@ void dump_arg_settings(void)
                    p->location_type == TYPE_REG ? "reg" : "addr");
         } else if (p->vtype == TYPE_UINT32) {
             printf("Arg %zu: name='%s', type=uint32, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT16) {
+            printf("Arg %zu: name='%s', type=uint16, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT8) {
+            printf("Arg %zu: name='%s', type=uint8, location_type=%s, ",
                    i, p->name,
                    p->location_type == TYPE_REG ? "reg" : "addr");
         } else {

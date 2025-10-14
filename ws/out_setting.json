@@ -1,12 +1,6 @@
 {
   "out1": {
-    "xaddr": 134542884,
-    "reg": "s0",
-    "type": "float"
-  },
-  "out2": {
-    "xaddr": 134542884,
-    "reg": "s1",
+    "reg": "r0",
     "type": "float"
   }
 }
