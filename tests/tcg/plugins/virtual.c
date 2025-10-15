@@ -859,7 +859,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
             printf("[VI randargs] unknown pointer arg '%s' has been tried %d times\n", setting->name, setting->non_ptr_iters);
             if (setting->non_ptr_iters > NON_PTR_ITER_MAX) {
                 printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer after %d tries\n", setting->name, setting->non_ptr_iters);
-                if (setting->location_type == TYPE_ADDR) {
+                if (setting->location_type == TYPE_ADDR) { // heuristic: all 4 bytes struct are floats (todo: improve)
                     // set to float
                     setting->is_pointer = IS_PTR_FALSE;
                     setting->vtype = TYPE_FLOAT;
@@ -869,10 +869,15 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
                     clear_all_path_logs();
                 }
-                else {
-                    // error
-                    fprintf(stderr, "[VI randargs] Cannot fix unknown pointer arg '%s' with location type %d\n", setting->name, setting->location_type);
-                    exit(EXIT_FAILURE);
+                else if (setting->location_type == TYPE_REG) { // float regs are identified statically
+                    // set to float
+                    setting->is_pointer = IS_PTR_FALSE;
+                    setting->vtype = TYPE_UINT32;
+                    setting->value_count = 2;
+                    setting->value_range[0].u32 = 0;
+                    setting->value_range[1].u32 = 2; // default range [0, 2]
+
+                    clear_all_path_logs();
                 }
             }
 

@@ -8,8 +8,7 @@
   "arg2": {
       "reg": "r1",
       "type": "uint32",
-      "is_pointer": "false",
-      "size": 4,
-      "value_range": [0, 2]
+      "is_pointer": "unknown",
+      "size": 4
   }
 }

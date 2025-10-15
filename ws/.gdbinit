@@ -37,8 +37,8 @@ target remote :1235
 set $sp=0x20000600
 
 # # break to a safe point (seems not needed)
-# b *0x08114a12
-# c
+b *0x08114a12
+c
 
 # # test
 # set $pc=0x8101e84
