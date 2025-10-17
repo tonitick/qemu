@@ -80,7 +80,8 @@ typedef enum {
 
 typedef union {
     float f;
-    uint32_t u32;
+    // double d; // heuristic: all 8 bytes struct are double (todo: improve)
+    uint32_t u32; // heuristic: only int less than 4 bytes (uint16 & uint8), and reuse the uint32_t field (todo: 8 bytes int?)
 } ValueUnion;
 
 

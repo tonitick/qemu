@@ -32,6 +32,9 @@ int isdigit(int c);
 #define MAX_LINE_LEN 128
 #define MAX_RULES 256
 char dump_path[256] = "collected_data";
+int default_int_range[2] = {0, 2};
+double default_float_range[2] = {0.5, 5.0};
+
 
 typedef unsigned long hwaddr;
 typedef struct unimp_exporter {
@@ -819,7 +822,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     }
     if (check_path_log_size_and_dump(dump_path)) {
         printf("[VI randargs] log finished, dump related path logs\n");
-        dump_all_path_logs();
+        // dump_all_path_logs();
         exit(0);
     }
     if (cur_iteration == 0) {
@@ -864,8 +867,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
                     setting->is_pointer = IS_PTR_FALSE;
                     setting->vtype = TYPE_FLOAT;
                     setting->value_count = 2;
-                    setting->value_range[0].f = 0.5;
-                    setting->value_range[1].f = 5.0; // default range [0.5, 5.0]
+                    setting->value_range[0].f = default_float_range[0];
+                    setting->value_range[1].f = default_float_range[1];
 
                     clear_all_path_logs();
                 }
@@ -874,20 +877,11 @@ static void randargs(unsigned int cpu_index, void *udata) {
                     setting->is_pointer = IS_PTR_FALSE;
                     setting->vtype = TYPE_UINT32;
                     setting->value_count = 2;
-                    setting->value_range[0].u32 = 0;
-                    setting->value_range[1].u32 = 2; // default range [0, 2]
-
+                    setting->value_range[0].u32 = default_int_range[0];
+                    setting->value_range[1].u32 = default_int_range[1];
                     clear_all_path_logs();
                 }
             }
-
-            // set arg
-            // printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer\n", setting->name);
-            // setting->is_pointer = IS_PTR_FALSE;
-            // setting->vtype = TYPE_UINT32;
-            // setting->value_count = 2;
-            // setting->value_range[0].u32 = 0;
-            // setting->value_range[1].u32 = 2; // default range [0, 2]
         }
     }
 
@@ -916,8 +910,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
             // exit(EXIT_FAILURE);
             // use default [0, 2]
             setting->value_count = 2;
-            setting->value_range[0].u32 = 0;
-            setting->value_range[1].u32 = 2;
+            setting->value_range[0].u32 = default_int_range[0];
+            setting->value_range[1].u32 = default_int_range[1];
             value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
         }
         if (setting->vtype == TYPE_FLOAT) {
@@ -1112,14 +1106,14 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                 new_setting->vtype = TYPE_UINT16; // must be int
                 new_setting->is_pointer = IS_PTR_FALSE; // 2-byte int not pointer
                 new_setting->value_count = 2;
-                new_setting->value_range[0].u32 = 0;
-                new_setting->value_range[1].u32 = 2; // default range [0, 2]
+                new_setting->value_range[0].u32 = default_int_range[0];
+                new_setting->value_range[1].u32 = default_int_range[1];
             } else if (sz_bytes == 1) {
                 new_setting->vtype = TYPE_UINT8; // must be int
                 new_setting->is_pointer = IS_PTR_FALSE; // 1-byte int not pointer
                 new_setting->value_count = 2;
-                new_setting->value_range[0].u32 = 0;
-                new_setting->value_range[1].u32 = 2; // default range [0, 2]
+                new_setting->value_range[0].u32 = default_int_range[0];
+                new_setting->value_range[1].u32 = default_int_range[1];
             } else {
                 fprintf(stderr, "Unsupported size %u bytes for new arg setting at address 0x%lx\n", sz_bytes, vaddr);
                 exit(EXIT_FAILURE);
@@ -1159,8 +1153,8 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                     setting->sz = 4;
                     setting->is_pointer = IS_PTR_FALSE;
                     setting->value_count = 2; // single value
-                    setting->value_range[0].f = 0.5f;
-                    setting->value_range[1].f = 5.0f; // defaut range [0.5, 5.0]
+                    setting->value_range[0].f = default_float_range[0];
+                    setting->value_range[1].f = default_float_range[1];
                     /***********************************************************************************************
                        note:
                        Memory callbacks are called after a successful load or store
@@ -1210,8 +1204,8 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 new_setting->vtype = TYPE_FLOAT;
                 new_setting->is_pointer = IS_PTR_FALSE; // TODO: handle nested structs
                 new_setting->value_count = 2;
-                new_setting->value_range[0].f = 0.5f;
-                new_setting->value_range[1].f = 5.0f; // defaut range [0.5, 5.0]
+                new_setting->value_range[0].f = default_float_range[0];
+                new_setting->value_range[1].f = default_float_range[1];
 
                 is_logging_valid = false;
                 printf("[MEMCB update_float_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
