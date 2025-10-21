@@ -225,6 +225,8 @@ void parse_arg_settings(const char *json)
                 if (cJSON_IsNumber(num)) {
                     if (s->vtype == TYPE_FLOAT) {
                         s->value_range[i].f = num->valuedouble;  // store as float
+                    } else if (s->vtype == TYPE_DOUBLE) {
+                        s->value_range[i].d = num->valuedouble;
                     } else if (s->vtype == TYPE_UINT32) {
                         s->value_range[i].u32 = (uint32_t)num->valueint;  // store as uint32_t
                     } else {

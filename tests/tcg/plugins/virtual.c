@@ -928,7 +928,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
     current_path_len = 0;
 
-    // TODO: only re-assign variables for int types that are non
+    // main logic: rand variables and set registers/memory
     is_logging_valid = true;
     cur_iteration++;
     printf("[VI randargs] iteration %d:\n", cur_iteration);
@@ -1037,6 +1037,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
         if (setting->location_type == TYPE_REG) {
             if (setting->vtype == TYPE_FLOAT) {
                 printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.f);
+            } else if (setting->vtype == TYPE_DOUBLE) {
+                printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.d);
             } else if (setting->vtype == TYPE_UINT32) {
                 printf("[VI randargs] setting register %s to value: %u\n", setting->reg, value.u32);
             }
@@ -1045,7 +1047,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
-            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
+            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg)); // TODO: check with arslan, looks like it write 8 bytes for all float regs?
         } else if (setting->location_type == TYPE_ADDR) {
             if (setting->vtype == TYPE_FLOAT) {
                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
