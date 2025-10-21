@@ -15,7 +15,7 @@
 #define MAX_PER_PATH_LOG_SIZE 100
 typedef struct {
     size_t count;
-    union { float f[MAX_PER_PATH_LOG_SIZE]; uint32_t u32[MAX_PER_PATH_LOG_SIZE]; } data;
+    union { float f[MAX_PER_PATH_LOG_SIZE]; uint32_t u32[MAX_PER_PATH_LOG_SIZE]; double d[MAX_PER_PATH_LOG_SIZE]; } data;
 } ArgValueLogs;
 typedef ArgValueLogs RetValueLogs;
 
@@ -74,16 +74,32 @@ void record_trace_values(const uint64_t *seq, size_t len,
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (arg_settings[i].vtype == TYPE_FLOAT)
             L->data.f[L->count++] = arg_vals[i].f;
-        else
+        else if (arg_settings[i].vtype == TYPE_DOUBLE)
+            L->data.d[L->count++] = arg_vals[i].d;
+        else if (arg_settings[i].vtype == TYPE_UINT32)
             L->data.u32[L->count++] = arg_vals[i].u32;
+        else if (arg_settings[i].vtype == TYPE_UINT16)
+            L->data.u32[L->count++] = arg_vals[i].u32;
+        else if (arg_settings[i].vtype == TYPE_UINT8)
+            L->data.u32[L->count++] = arg_vals[i].u32;
+        else {
+            fprintf(stderr, "Unsupported arg type in record_trace_values for arg '%s'\n", arg_settings[i].name);
+            exit(EXIT_FAILURE);
+        }
     }
     for (size_t i = 0; i < ret_count; ++i) {
         RetValueLogs *L = &e->rets[i];
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (ret_settings[i].vtype == TYPE_FLOAT)
             L->data.f[L->count++] = ret_vals[i].f;
-        else
+        else if (ret_settings[i].vtype == TYPE_DOUBLE)
+            L->data.d[L->count++] = ret_vals[i].d;
+        else if (ret_settings[i].vtype == TYPE_UINT32)
             L->data.u32[L->count++] = ret_vals[i].u32;
+        else {
+            fprintf(stderr, "Unsupported ret type in record_trace_values for ret '%s'\n", ret_settings[i].name);
+            exit(EXIT_FAILURE);
+        }
     }
 }
 
@@ -173,11 +189,20 @@ int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
 
             for (size_t i = 0; i < arg_count; ++i) {
                 if (arg_settings[i].vtype == TYPE_FLOAT) {
-                    printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+                    printf("  IN (FLOAT)  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
                     fprintf(f, "[IN] %s: ", arg_settings[i].name);
                     for (size_t j = 0; j < e->args[i].count; ++j) {
                         printf("       %g\n", e->args[i].data.f[j]);
                         fprintf(f, "%.10f ", e->args[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+                else if (arg_settings[i].vtype == TYPE_DOUBLE) {
+                    printf("  IN (DOUBLE)  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+                    fprintf(f, "[IN] %s: ", arg_settings[i].name);
+                    for (size_t j = 0; j < e->args[i].count; ++j) {
+                        printf("       %g\n", e->args[i].data.d[j]);
+                        fprintf(f, "%.10g ", e->args[i].data.d[j]);
                     }
                     fprintf(f, "\n");
                 }
@@ -190,6 +215,15 @@ int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
                     for (size_t j = 0; j < e->rets[i].count; ++j) {
                         printf("       %g\n", e->rets[i].data.f[j]);
                         fprintf(f, "%.10f ", e->rets[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+                else if (ret_settings[i].vtype == TYPE_DOUBLE) {
+                    printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
+                    fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                    for (size_t j = 0; j < e->rets[i].count; ++j) {
+                        printf("       %g\n", e->rets[i].data.d[j]);
+                        fprintf(f, "%.10g ", e->rets[i].data.d[j]);
                     }
                     fprintf(f, "\n");
                 }
@@ -239,6 +273,15 @@ void dump_existing_path_logs(char* dump_dir) {
                     }
                     fprintf(f, "\n");
                 }
+                else if (arg_settings[i].vtype == TYPE_DOUBLE) {
+                    printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+                    fprintf(f, "[IN] %s: ", arg_settings[i].name);
+                    for (size_t j = 0; j < e->args[i].count; ++j) {
+                        printf("       %g\n", e->args[i].data.d[j]);
+                        fprintf(f, "%.10f ", e->args[i].data.d[j]);
+                    }
+                    fprintf(f, "\n");
+                }
             }
 
             for (size_t i = 0; i < ret_count; ++i) {
@@ -248,6 +291,15 @@ void dump_existing_path_logs(char* dump_dir) {
                     for (size_t j = 0; j < e->rets[i].count; ++j) {
                         printf("       %g\n", e->rets[i].data.f[j]);
                         fprintf(f, "%.10f ", e->rets[i].data.f[j]);
+                    }
+                    fprintf(f, "\n");
+                }
+                else if (ret_settings[i].vtype == TYPE_DOUBLE) {
+                    printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
+                    fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                    for (size_t j = 0; j < e->rets[i].count; ++j) {
+                        printf("       %g\n", e->rets[i].data.d[j]);
+                        fprintf(f, "%.10f ", e->rets[i].data.d[j]);
                     }
                     fprintf(f, "\n");
                 }
@@ -267,7 +319,7 @@ void clear_all_path_logs(void)
 #define MAX_PATH_LENGTH 1024
 uint64_t current_path[MAX_PATH_LENGTH];
 size_t current_path_len = 0;
-ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS];
+ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS]; // a single input-output record
 bool is_logging_valid = true;
 
 

@@ -80,8 +80,9 @@ typedef enum {
 
 typedef union {
     float f;
-    // double d; // heuristic: all 8 bytes struct are double (todo: improve)
+    double d; // heuristic: all 8 bytes struct are double (todo: improve)
     uint32_t u32; // heuristic: only int less than 4 bytes (uint16 & uint8), and reuse the uint32_t field (todo: 8 bytes int?)
+    uint64_t u64;
 } ValueUnion;
 
 
@@ -169,6 +170,8 @@ void parse_arg_settings(const char *json)
                 s->vtype = TYPE_FLOAT;
             } else if (strcmp(type->valuestring, "uint32") == 0) {
                 s->vtype = TYPE_UINT32;
+            } else if (strcmp(type->valuestring, "double") == 0) {
+                s->vtype = TYPE_DOUBLE;
             } else {
                 fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
                 cJSON_Delete(root);
@@ -283,6 +286,10 @@ void dump_arg_settings(void)
             printf("Arg %zu: name='%s', type=float, location_type=%s, ",
                    i, p->name,
                    p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_DOUBLE) {
+            printf("Arg %zu: name='%s', type=double, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
         } else if (p->vtype == TYPE_UINT32) {
             printf("Arg %zu: name='%s', type=uint32, location_type=%s, ",
                    i, p->name,
@@ -323,6 +330,9 @@ void dump_arg_settings(void)
         for (size_t j = 0; j < p->value_count; ++j) {
             if (p->vtype == TYPE_FLOAT) {
                 printf("%g%s", p->value_range[j].f,
+                       j + 1 == p->value_count ? "" : ", ");
+            } else if (p->vtype == TYPE_DOUBLE) {
+                printf("%g%s", p->value_range[j].d,
                        j + 1 == p->value_count ? "" : ", ");
             } else if (p->vtype == TYPE_UINT32) {
                 printf("%u%s", p->value_range[j].u32,
@@ -401,6 +411,8 @@ void parse_ret_settings(const char *json)
                 s->vtype = TYPE_FLOAT;
             } else if (strcmp(type->valuestring, "uint32") == 0) {
                 s->vtype = TYPE_UINT32;
+            } else if (strcmp(type->valuestring, "double") == 0) {
+                s->vtype = TYPE_DOUBLE;
             } else {
                 fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
                 cJSON_Delete(root);
@@ -429,6 +441,10 @@ void dump_ret_settings(void)
                    p->location_type == TYPE_REG ? "reg" : "addr");
         } else if (p->vtype == TYPE_UINT32) {
             printf("Ret %zu: name='%s', type=uint32, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_DOUBLE) {
+            printf("Ret %zu: name='%s', type=double, location_type=%s, ",
                    i, p->name,
                    p->location_type == TYPE_REG ? "reg" : "addr");
         } else {

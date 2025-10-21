@@ -34,7 +34,7 @@ int isdigit(int c);
 char dump_path[256] = "collected_data";
 int default_int_range[2] = {0, 2};
 double default_float_range[2] = {0.5, 5.0};
-
+double default_double_range[2] = {0.5, 5.0};
 
 typedef unsigned long hwaddr;
 typedef struct unimp_exporter {
@@ -507,8 +507,8 @@ static void dumplogger(unsigned int cpu_index, void *udata);
 static void dyninst(unsigned int cpu_index, void *udata);
 static void dyninst_lib(unsigned int cpu_index, void *udata);
 
-uint32_t qemu_get_register(int reg);
-uint32_t qemu_get_register(int reg)
+uint32_t qemu_get_register_32(int reg);
+uint32_t qemu_get_register_32(int reg)
 {
     g_autoptr(GArray) reg_list = qemu_plugin_get_registers();
     g_autoptr(GByteArray) reg_value = g_byte_array_new();
@@ -535,6 +535,40 @@ uint32_t qemu_get_register(int reg)
     return_data = (((uint32_t) (reg_value->data[offset + 1])) << 8)  | return_data;
     return_data = (((uint32_t) (reg_value->data[offset + 2])) << 16) | return_data;
     return_data = (((uint32_t) (reg_value->data[offset + 3])) << 24) | return_data;
+    return return_data;
+}
+
+uint64_t qemu_get_register_64(int reg);
+uint64_t qemu_get_register_64(int reg)
+{
+    g_autoptr(GArray) reg_list = qemu_plugin_get_registers();
+    g_autoptr(GByteArray) reg_value = g_byte_array_new();
+    int offset = 0;
+    int oreg = reg;
+
+    if (reg >= ARM_V7M_D0 && reg <= ARM_V7M_D15) {
+        oreg = 17 + ((reg - ARM_V7M_D0) / 2);
+    }
+    else {
+        fprintf(stderr, "Error: only D0-D15 supported for 64-bit register read\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (reg_list) {
+            qemu_plugin_reg_descriptor *rd = &g_array_index(
+                reg_list, qemu_plugin_reg_descriptor, oreg);
+            int count = qemu_plugin_read_register(rd->handle, reg_value);
+            g_assert(count > 0);
+    }
+
+    uint64_t return_data = reg_value->data[offset + 0];
+    return_data = (((uint64_t) (reg_value->data[offset + 1])) << 8)  | return_data;
+    return_data = (((uint64_t) (reg_value->data[offset + 2])) << 16) | return_data;
+    return_data = (((uint64_t) (reg_value->data[offset + 3])) << 24) | return_data;
+    return_data = (((uint64_t) (reg_value->data[offset + 4])) << 32) | return_data;
+    return_data = (((uint64_t) (reg_value->data[offset + 5])) << 40) | return_data;
+    return_data = (((uint64_t) (reg_value->data[offset + 6])) << 48) | return_data;
+    return_data = (((uint64_t) (reg_value->data[offset + 7])) << 56) | return_data;
     return return_data;
 }
 
@@ -811,6 +845,13 @@ float get_random_float(float min, float max) {
     return min + (random_word / (float)UINT32_MAX) * (max - min);
 }
 
+double get_random_double(double min, double max);
+double get_random_double(double min, double max) {
+    // Generate a random double in the range [min, max]
+    unsigned int random_word = get_random_word();
+    return (double)(((float)min + (random_word / (float)UINT32_MAX) * ((float)max - (float)min)));
+}
+
 static int cur_iteration = 0;
 #define MAX_FUZZ_ITERATIONS 10000000
 static void randargs(unsigned int cpu_index, void *udata) {
@@ -896,7 +937,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
         ArgSetting *setting = &arg_settings[i];
         // use range to generate random value
         ValueUnion value;
-        if (setting->vtype == TYPE_UNKNOWN) {
+        if (setting->vtype == TYPE_UNKNOWN) { // only for potential pointer types, size = 4
             // treat as uint32 first
             // value_count shoule be 0
             if (setting->value_count != 0) {
@@ -924,6 +965,20 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
             } else {
                 fprintf(stderr, "[VI randargs] Invalid value count for float type in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
+            }
+        } else if (setting->vtype == TYPE_DOUBLE) {
+            // assert(setting->value_count == 2);
+            if (setting->value_count == 1) {
+                value.d = setting->value_range[0].d;
+            }
+            else if (setting->value_count == 2) {
+                // Generate a random double in the range
+                value.d = get_random_double(setting->value_range[0].d, setting->value_range[1].d);
+                printf("[VI randargs] generated double value %g for setting '%s'\n", value.d, setting->name);
+            } else {
+                fprintf(stderr, "[VI randargs] Invalid value count for double type in setting '%s'\n", setting->name);
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
@@ -982,17 +1037,40 @@ static void randargs(unsigned int cpu_index, void *udata) {
         if (setting->location_type == TYPE_REG) {
             if (setting->vtype == TYPE_FLOAT) {
                 printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.f);
-            } else {
+            } else if (setting->vtype == TYPE_UINT32) {
                 printf("[VI randargs] setting register %s to value: %u\n", setting->reg, value.u32);
+            }
+            else {
+                fprintf(stderr, "[VI randargs] Unsupported value type for register in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
             }
             qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
         } else if (setting->location_type == TYPE_ADDR) {
             if (setting->vtype == TYPE_FLOAT) {
-                printf("[VI randargs] writing value %g to memory address: 0x%lx\n", value.f, setting->addr);
-            } else {
-                printf("[VI randargs] writing value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+                printf("[VI randargs] writing float value %g to memory address: 0x%lx\n", value.f, setting->addr);
+            } else if (setting->vtype == TYPE_DOUBLE) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 8);
+                printf("[VI randargs] writing double value %g to memory address: 0x%lx\n", value.d, setting->addr);
+            } else if (setting->vtype == TYPE_UINT32) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+                printf("[VI randargs] writing uint32 value %u to memory address: 0x%lx\n", value.u32, setting->addr);
             }
-            qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+            else if (setting->vtype == TYPE_UINT16) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 2);
+                printf("[VI randargs] writing uint16 value %u to memory address: 0x%lx\n", (uint16_t)(value.u32 & 0xFFFF), setting->addr);
+            }
+            else if (setting->vtype == TYPE_UINT8) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 1);
+                printf("[VI randargs] writing uint8 value %u to memory address: 0x%lx\n", (uint8_t)(value.u32 & 0xFF), setting->addr);
+            }
+            else {
+                fprintf(stderr, "[VI randargs] Unsupported value type for memory in setting '%s'\n", setting->name);
+                perror("randargs");
+                exit(EXIT_FAILURE);
+            }
+            // qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
         } else {
             fprintf(stderr, "[VI randargs] Unsupported location type in setting '%s'\n", setting->name);
             perror("randargs");
@@ -1013,14 +1091,21 @@ static void logrets(unsigned int cpu_index, void *udata) {
         ValueUnion value;
         if (setting->location_type == TYPE_REG) {
             // Log register value
-            value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
+            // value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
             if (setting->vtype == TYPE_FLOAT) {
-                // value.f = qemu_get_register(get_reg_by_name(setting->reg));
-                printf("[VI logrets] register %s: %g\n", setting->reg, value.f);
+                value.u32 = qemu_get_register_32(get_reg_by_name(setting->reg)); // just copy the bytes
+                printf("[VI logrets] float register %s: %g\n", setting->reg, value.f);
+            } else if (setting->vtype == TYPE_UINT32) {
+                value.u32 = qemu_get_register_32(get_reg_by_name(setting->reg));
+                printf("[VI logrets] uint32 register %s: %u\n", setting->reg, value.u32);
+            } else if (setting->vtype == TYPE_DOUBLE) {
+                value.u64 = qemu_get_register_64(get_reg_by_name(setting->reg)); // just copy the bytes
+                printf("[VI logrets] double register %s: %g\n", setting->reg, value.d);
             } else {
-                // value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
-                printf("[VI logrets] register %s: %u\n", setting->reg, value.u32);
-            }
+                fprintf(stderr, "[VI logrets] Unsupported value type for register in setting '%s'\n", setting->name);
+                perror("logrets");
+                exit(EXIT_FAILURE);
+            }   
         } else if (setting->location_type == TYPE_ADDR) {
             // Log memory value
             qemu_plugin_read_memory(setting->addr, (uint8_t *)&value, 4);
@@ -1138,7 +1223,12 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     // qemu_plugin_mem_value val = qemu_plugin_mem_get_value(info);
 
     // check whether the address is in arg_settings
-    if (sz_bytes == 4 && !is_store) { // only handle 32-bit loads
+    // if (sz_bytes == 4 && !is_store) { // only handle 32-bit loads
+    if (!is_store) {
+        if (sz_bytes != 4 && sz_bytes != 8) {  // only handle 32/64 bit loads (for potential float/double struct fields)
+            fprintf(stderr, "[MEMCB update_float_addr_var_mem_cb], Unsupported size %u bytes for float memory callback at address 0x%lx\n", sz_bytes, vaddr);
+            exit(EXIT_FAILURE);
+        }
         // Iterate through arg_settings to find a match
         bool found_arg_match = false;
         for (size_t i = 0; i < arg_count; i++) {
@@ -1147,7 +1237,8 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
                 found_arg_match = true;
                 // We have a match, update the arg setting
-                if (setting->vtype != TYPE_FLOAT) { // fix type if not float
+                // if (setting->vtype != TYPE_FLOAT) { // fix type if not float
+                if (setting->vtype != TYPE_FLOAT && setting->sz == 4) {
                     // update to float
                     setting->vtype = TYPE_FLOAT;
                     setting->sz = 4;
@@ -1169,6 +1260,16 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                     // // update current logged_in_values
                     // logged_in_values[i].f = value.f;
                     // printf("[update_float_addr_var_mem_cb] updated logged_in_values[%zu] to %g\n", i, logged_in_values[i].f);
+                    is_logging_valid = false; // invalidate current logging
+                }
+                if (setting->vtype != TYPE_DOUBLE && setting->sz == 8) {
+                    // update to double
+                    setting->vtype = TYPE_DOUBLE;
+                    setting->sz = 8;
+                    setting->is_pointer = IS_PTR_FALSE;
+                    setting->value_count = 2; // single value
+                    setting->value_range[0].d = default_double_range[0];
+                    setting->value_range[1].d = default_double_range[1];
                     is_logging_valid = false; // invalidate current logging
                 }
             }
@@ -1200,26 +1301,40 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
                 new_setting->location_type = TYPE_ADDR;
                 new_setting->addr = vaddr;
-                new_setting->sz = 4;
-                new_setting->vtype = TYPE_FLOAT;
+                new_setting->sz = sz_bytes;
+                // new_setting->vtype = TYPE_FLOAT;
+                if (sz_bytes == 4) {
+                    new_setting->vtype = TYPE_FLOAT;
+                } else if (sz_bytes == 8) {
+                    new_setting->vtype = TYPE_DOUBLE;
+                } else {
+                    fprintf(stderr, "Unsupported size %u bytes for new float arg setting at address 0x%lx\n", sz_bytes, vaddr);
+                    exit(EXIT_FAILURE);
+                }
                 new_setting->is_pointer = IS_PTR_FALSE; // TODO: handle nested structs
                 new_setting->value_count = 2;
-                new_setting->value_range[0].f = default_float_range[0];
-                new_setting->value_range[1].f = default_float_range[1];
+                // new_setting->value_range[0].f = default_float_range[0];
+                // new_setting->value_range[1].f = default_float_range[1];
+                if (sz_bytes == 4) {
+                    new_setting->value_range[0].f = default_float_range[0];
+                    new_setting->value_range[1].f = default_float_range[1];
+                } else if (sz_bytes == 8) {
+                    new_setting->value_range[0].d = default_double_range[0];
+                    new_setting->value_range[1].d = default_double_range[1];
+                }
 
                 is_logging_valid = false;
-                printf("[MEMCB update_float_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+                printf("[MEMCB update_float_addr_var_mem_cb] New float arg setting '%s' for address 0x%lx creation done.\n", new_setting->name, vaddr);
             }
             // ArgSetting *new_setting = &arg_settings[arg_count++];
-            printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
+            // printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
         }
     }
-    // TODO: handle double here
 }
 
 static void logbbstart(unsigned int cpu_index, void *udata) {
     // get pc vlue
-    uint32_t pc = qemu_get_register(15); // Assuming 15 is the
+    uint32_t pc = qemu_get_register_32(15); // Assuming 15 is the
     current_path[current_path_len++] = (uint64_t)pc;
 }
 

@@ -69,7 +69,40 @@ typedef enum {
     ARM_V7M_S28 = 54,
     ARM_V7M_S29 = 55,
     ARM_V7M_S30 = 56,
-    ARM_V7M_S31 = 57
+    ARM_V7M_S31 = 57,
+
+    // ARM_V7M_D0 = 26,
+    // ARM_V7M_D1 = 27,
+    // ARM_V7M_D2 = 28,
+    // ARM_V7M_D3 = 29,
+    // ARM_V7M_D4 = 30,
+    // ARM_V7M_D5 = 31,
+    // ARM_V7M_D6 = 32,
+    // ARM_V7M_D7 = 33,
+    // ARM_V7M_D8 = 34,
+    // ARM_V7M_D9 = 35,
+    // ARM_V7M_D10 = 36,
+    // ARM_V7M_D11 = 37,
+    // ARM_V7M_D12 = 38,
+    // ARM_V7M_D13 = 39,
+    // ARM_V7M_D14 = 40,
+    // ARM_V7M_D15 = 41
+    ARM_V7M_D0 = 58,
+    ARM_V7M_D1 = 59,
+    ARM_V7M_D2 = 60,
+    ARM_V7M_D3 = 61,
+    ARM_V7M_D4 = 62,
+    ARM_V7M_D5 = 63,
+    ARM_V7M_D6 = 64,
+    ARM_V7M_D7 = 65,
+    ARM_V7M_D8 = 66,
+    ARM_V7M_D9 = 67,
+    ARM_V7M_D10 = 68,
+    ARM_V7M_D11 = 69,
+    ARM_V7M_D12 = 70,
+    ARM_V7M_D13 = 71,
+    ARM_V7M_D14 = 72,
+    ARM_V7M_D15 = 73
 } ARM_V7M_REG;
 
 ARM_V7M_REG get_reg_by_name(const char *name);
@@ -123,6 +156,23 @@ ARM_V7M_REG get_reg_by_name(const char *name) {
     if (strcmp(name, "s29") == 0) return ARM_V7M_S29;
     if (strcmp(name, "s30") == 0) return ARM_V7M_S30;
     if (strcmp(name, "s31") == 0) return ARM_V7M_S31;
+
+    if (strcmp(name, "d0") == 0) return ARM_V7M_D0;
+    if (strcmp(name, "d1") == 0) return ARM_V7M_D1;
+    if (strcmp(name, "d2") == 0) return ARM_V7M_D2;
+    if (strcmp(name, "d3") == 0) return ARM_V7M_D3;
+    if (strcmp(name, "d4") == 0) return ARM_V7M_D4;
+    if (strcmp(name, "d5") == 0) return ARM_V7M_D5;
+    if (strcmp(name, "d6") == 0) return ARM_V7M_D6;
+    if (strcmp(name, "d7") == 0) return ARM_V7M_D7;
+    if (strcmp(name, "d8") == 0) return ARM_V7M_D8;
+    if (strcmp(name, "d9") == 0) return ARM_V7M_D9;
+    if (strcmp(name, "d10") == 0) return ARM_V7M_D10;
+    if (strcmp(name, "d11") == 0) return ARM_V7M_D11;
+    if (strcmp(name, "d12") == 0) return ARM_V7M_D12;
+    if (strcmp(name, "d13") == 0) return ARM_V7M_D13;
+    if (strcmp(name, "d14") == 0) return ARM_V7M_D14;
+    if (strcmp(name, "d15") == 0) return ARM_V7M_D15;
 
     return ARM_V7M_REG_INVALID; // Invalid register name
 }
