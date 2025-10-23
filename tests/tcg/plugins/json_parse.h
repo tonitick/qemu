@@ -18,38 +18,6 @@
 #include <cjson/cJSON.h>
 
 // ===============================================================================================================================
-// Helper: read json file to buffer
-// ===============================================================================================================================
-char *read_json_file(const char *path);
-char *read_json_file(const char *path)
-{
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        fprintf(stderr, "cannot open '%s': %s\n", path, strerror(errno));
-        return NULL;
-    }
-    fseek(fp, 0, SEEK_END);
-    long len = ftell(fp);
-    rewind(fp);
-
-    char *buf = malloc((size_t)len + 1);
-    if (!buf) {
-        fprintf(stderr, "out of memory\n");
-        fclose(fp);
-        return NULL;
-    }
-    if (fread(buf, 1, (size_t)len, fp) != (size_t)len) {
-        fprintf(stderr, "short read from '%s'\n", path);
-        free(buf);
-        fclose(fp);
-        return NULL;
-    }
-    buf[len] = '\0';
-    fclose(fp);
-    return buf;
-}
-
-// ===============================================================================================================================
 // for randars
 // ===============================================================================================================================
 
@@ -356,7 +324,7 @@ void dump_arg_settings(void)
 typedef struct {
     char name[MAX_NAME];
 
-    unsigned long xaddr; // target address to examine output value
+    // unsigned long xaddr; // target address to examine output value
 
     /* Exactly one of the two will be set */
     ValueLocationType location_type; /* register or addr */
@@ -385,11 +353,11 @@ void parse_ret_settings(const char *json)
         memset(s, 0, sizeof(*s));
         strncpy(s->name, arg->string, MAX_NAME - 1);
 
-        /* xaddr */
-        cJSON *xaddr = cJSON_GetObjectItemCaseSensitive(arg, "xaddr");
-        if (cJSON_IsNumber(xaddr)) {
-            s->xaddr = xaddr->valueint;
-        }
+        // /* xaddr */
+        // cJSON *xaddr = cJSON_GetObjectItemCaseSensitive(arg, "xaddr");
+        // if (cJSON_IsNumber(xaddr)) {
+        //     s->xaddr = xaddr->valueint;
+        // }
 
         /* reg or addr (mutually exclusive) */
         cJSON *reg = cJSON_GetObjectItemCaseSensitive(arg, "reg");
@@ -459,7 +427,7 @@ void dump_ret_settings(void)
         } else if (p->location_type == TYPE_ADDR) {
             printf("addr=0x%lx, ", p->addr);
         }
-        printf("xaddr=0x%lx\n", p->xaddr);
+        // printf("xaddr=0x%lx\n", p->xaddr);
     }
 }
 
@@ -521,5 +489,70 @@ void dump_ret_settings(void)
 //         }
 //     }
 // }
+
+
+// ===============================================================================================================================
+// Helper: read json file to buffer
+// ===============================================================================================================================
+char *read_json_file(const char *path);
+char *read_json_file(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        fprintf(stderr, "cannot open '%s': %s\n", path, strerror(errno));
+        return NULL;
+    }
+    fseek(fp, 0, SEEK_END);
+    long len = ftell(fp);
+    rewind(fp);
+
+    char *buf = malloc((size_t)len + 1);
+    if (!buf) {
+        fprintf(stderr, "out of memory\n");
+        fclose(fp);
+        return NULL;
+    }
+    if (fread(buf, 1, (size_t)len, fp) != (size_t)len) {
+        fprintf(stderr, "short read from '%s'\n", path);
+        free(buf);
+        fclose(fp);
+        return NULL;
+    }
+    buf[len] = '\0';
+    fclose(fp);
+    return buf;
+}
+
+void parse_json_args(const char *filename);
+void parse_json_args(const char *filename)
+{
+    char *json = read_json_file(filename);
+    if (!json) {
+        perror("read_json_file failed");
+        return;
+    }
+
+    parse_arg_settings(json);
+
+    free(json);
+
+    dump_arg_settings();
+}
+
+void parse_json_outs(const char *filename);
+void parse_json_outs(const char *filename)
+{
+    char *json = read_json_file(filename);
+    if (!json) {
+        perror("read_json_file failed");
+        return;
+    }
+
+    parse_ret_settings(json);
+
+    free(json);
+
+    dump_ret_settings();
+}
 
 #endif // JSON_PARSE_H
