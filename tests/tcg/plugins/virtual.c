@@ -34,7 +34,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 char dump_path[256] = "collected_data";
 int default_int_range[2] = {0, 2};
-double default_float_range[2] = {0.5, 5.0};
+float default_float_range[2] = {0.5, 5.0};
 double default_double_range[2] = {0.5, 5.0};
 
 // typedef unsigned long hwaddr;
@@ -451,13 +451,18 @@ static void logrets(unsigned int cpu_index, void *udata) {
 }
 
 // --------------------------------------------------------------------------------------
-// clearpathlogs
+// clearpathlogs, logbbstart
 // --------------------------------------------------------------------------------------
 static void clearpathlogs(unsigned int cpu_index, void *udata) {
     // Clear all path logs
     clear_all_path_logs();
 }
 
+static void logbbstart(unsigned int cpu_index, void *udata) {
+    // get pc vlue
+    uint32_t pc = qemu_get_register_32(15); // Assuming 15 is the
+    current_path[current_path_len++] = (uint64_t)pc;
+}
 
 // --------------------------------------------------------------------------------------
 // memory callbacks
@@ -556,118 +561,112 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
 
     // check whether the address is in arg_settings
     // if (sz_bytes == 4 && !is_store) { // only handle 32-bit loads
-    if (!is_store) {
-        if (sz_bytes != 4 && sz_bytes != 8) {  // only handle 32/64 bit loads (for potential float/double struct fields)
-            fprintf(stderr, "[MEMCB update_float_addr_var_mem_cb], Unsupported size %u bytes for float memory callback at address 0x%lx\n", sz_bytes, vaddr);
-            exit(EXIT_FAILURE);
-        }
-        // Iterate through arg_settings to find a match
-        bool found_arg_match = false;
-        for (size_t i = 0; i < arg_count; i++) {
-            ArgSetting *setting = &arg_settings[i];
-            // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
-            if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
-                found_arg_match = true;
-                // We have a match, update the arg setting
-                // if (setting->vtype != TYPE_FLOAT) { // fix type if not float
-                if (setting->vtype != TYPE_FLOAT && setting->sz == 4) {
-                    // update to float
-                    setting->vtype = TYPE_FLOAT;
-                    setting->sz = 4;
-                    setting->is_pointer = IS_PTR_FALSE;
-                    setting->value_count = 2; // single value
-                    setting->value_range[0].f = default_float_range[0];
-                    setting->value_range[1].f = default_float_range[1];
-                    /***********************************************************************************************
-                       note:
-                       Memory callbacks are called after a successful load or store
-                       according to https://qemu.readthedocs.io/en/v9.0.4/devel/tcg-plugins.html
-                       we cannot update the memory value here, should discard the results for the current iteration
-                    ***********************************************************************************************/
-                    // ValueUnion value;
-                    // value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
-                    // printf("[update_float_addr_var_mem_cb] update memory at 0x%lx to float value: %g\n", vaddr, value.f);
-                    // // write the new float value to memory
-                    // qemu_plugin_write_memory(vaddr, (uint8_t *)&value, 4);
-                    // // update current logged_in_values
-                    // logged_in_values[i].f = value.f;
-                    // printf("[update_float_addr_var_mem_cb] updated logged_in_values[%zu] to %g\n", i, logged_in_values[i].f);
-                    is_logging_valid = false; // invalidate current logging
-                }
-                if (setting->vtype != TYPE_DOUBLE && setting->sz == 8) {
-                    // update to double
-                    setting->vtype = TYPE_DOUBLE;
-                    setting->sz = 8;
-                    setting->is_pointer = IS_PTR_FALSE;
-                    setting->value_count = 2; // single value
-                    setting->value_range[0].d = default_double_range[0];
-                    setting->value_range[1].d = default_double_range[1];
-                    is_logging_valid = false; // invalidate current logging
-                }
+    // if (!is_store) {
+    if (sz_bytes != 4 && sz_bytes != 8) {  // only handle 32/64 bit loads (for potential float/double struct fields)
+        fprintf(stderr, "[MEMCB update_float_addr_var_mem_cb], Unsupported size %u bytes for float memory callback at address 0x%lx\n", sz_bytes, vaddr);
+        exit(EXIT_FAILURE);
+    }
+    // Iterate through arg_settings to find a match
+    bool found_arg_match = false;
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *setting = &arg_settings[i];
+        // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+        if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
+            found_arg_match = true;
+            // We have a match, update the arg setting
+            // if (setting->vtype != TYPE_FLOAT) { // fix type if not float
+            if (setting->vtype != TYPE_FLOAT && setting->sz == 4) {
+                // update to float
+                setting->vtype = TYPE_FLOAT;
+                setting->sz = 4;
+                setting->is_pointer = IS_PTR_FALSE;
+                setting->value_count = 2; // single value
+                setting->value_range[0].f = default_float_range[0];
+                setting->value_range[1].f = default_float_range[1];
+                /***********************************************************************************************
+                     note:
+                    Memory callbacks are called after a successful load or store
+                    according to https://qemu.readthedocs.io/en/v9.0.4/devel/tcg-plugins.html
+                    we cannot update the memory value here, should discard the results for the current iteration
+                ***********************************************************************************************/
+                // ValueUnion value;
+                // value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
+                // printf("[update_float_addr_var_mem_cb] update memory at 0x%lx to float value: %g\n", vaddr, value.f);
+                // // write the new float value to memory
+                // qemu_plugin_write_memory(vaddr, (uint8_t *)&value, 4);
+                // // update current logged_in_values
+                // logged_in_values[i].f = value.f;
+                // printf("[update_float_addr_var_mem_cb] updated logged_in_values[%zu] to %g\n", i, logged_in_values[i].f);
+                is_logging_valid = false; // invalidate current logging
             }
-        }
-        if (!found_arg_match) {
-            printf("[MEMCB update_float_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
-            // create new arg setting
-            if (arg_count >= MAX_ARGS) {
-                fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
-                exit(EXIT_FAILURE);
+            if (setting->vtype != TYPE_DOUBLE && setting->sz == 8) {
+                // update to double
+                setting->vtype = TYPE_DOUBLE;
+                setting->sz = 8;
+                setting->is_pointer = IS_PTR_FALSE;
+                setting->value_count = 2; // single value
+                setting->value_range[0].d = default_double_range[0];
+                setting->value_range[1].d = default_double_range[1];
+                is_logging_valid = false; // invalidate current logging
             }
-            int parent_allocated_struct_idx = find_parent_struct_by_addr(vaddr, sz_bytes);
-            if (parent_allocated_struct_idx >= 0) {
-                assert(parent_allocated_struct_idx < allocated_struct_count);
-                unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
-                printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
-                // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
-                size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
-                int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
-                assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
-                struct NestedStruct *parent_struct = allocated_structs[parent_allocated_struct_idx];
-                parent_struct->is_pointer = IS_PTR_TRUE; // mark as pointer
-
-                // create new arg setting based on parent
-                size_t offset = vaddr - parent_allocated_addr;
-                ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
-                parent_setting->is_pointer = IS_PTR_TRUE; // mark as pointer
-                ArgSetting *new_setting = &arg_settings[arg_count++];
-                snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
-                new_setting->location_type = TYPE_ADDR;
-                new_setting->addr = vaddr;
-                new_setting->sz = sz_bytes;
-                // new_setting->vtype = TYPE_FLOAT;
-                if (sz_bytes == 4) {
-                    new_setting->vtype = TYPE_FLOAT;
-                } else if (sz_bytes == 8) {
-                    new_setting->vtype = TYPE_DOUBLE;
-                } else {
-                    fprintf(stderr, "Unsupported size %u bytes for new float arg setting at address 0x%lx\n", sz_bytes, vaddr);
-                    exit(EXIT_FAILURE);
-                }
-                new_setting->is_pointer = IS_PTR_FALSE; // TODO: handle nested structs
-                new_setting->value_count = 2;
-                // new_setting->value_range[0].f = default_float_range[0];
-                // new_setting->value_range[1].f = default_float_range[1];
-                if (sz_bytes == 4) {
-                    new_setting->value_range[0].f = default_float_range[0];
-                    new_setting->value_range[1].f = default_float_range[1];
-                } else if (sz_bytes == 8) {
-                    new_setting->value_range[0].d = default_double_range[0];
-                    new_setting->value_range[1].d = default_double_range[1];
-                }
-
-                is_logging_valid = false;
-                printf("[MEMCB update_float_addr_var_mem_cb] New float arg setting '%s' for address 0x%lx creation done.\n", new_setting->name, vaddr);
-            }
-            // ArgSetting *new_setting = &arg_settings[arg_count++];
-            // printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
         }
     }
-}
+    if (!found_arg_match) {
+        printf("[MEMCB update_float_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
+        // create new arg setting
+        if (arg_count >= MAX_ARGS) {
+            fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
+            exit(EXIT_FAILURE);
+        }
+        int parent_allocated_struct_idx = find_parent_struct_by_addr(vaddr, sz_bytes);
+        if (parent_allocated_struct_idx >= 0) {
+            assert(parent_allocated_struct_idx < allocated_struct_count);
+            unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
+            printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
+            // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
+            size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
+            int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
+            assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
+            struct NestedStruct *parent_struct = allocated_structs[parent_allocated_struct_idx];
+            parent_struct->is_pointer = IS_PTR_TRUE; // mark as pointer
 
-static void logbbstart(unsigned int cpu_index, void *udata) {
-    // get pc vlue
-    uint32_t pc = qemu_get_register_32(15); // Assuming 15 is the
-    current_path[current_path_len++] = (uint64_t)pc;
+            // create new arg setting based on parent
+            size_t offset = vaddr - parent_allocated_addr;
+            ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
+            parent_setting->is_pointer = IS_PTR_TRUE; // mark as pointer
+            ArgSetting *new_setting = &arg_settings[arg_count++];
+            snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
+            new_setting->location_type = TYPE_ADDR;
+            new_setting->addr = vaddr;
+            new_setting->sz = sz_bytes;
+            // new_setting->vtype = TYPE_FLOAT;
+            if (sz_bytes == 4) {
+                new_setting->vtype = TYPE_FLOAT;
+            } else if (sz_bytes == 8) {
+                new_setting->vtype = TYPE_DOUBLE;
+            } else {
+                fprintf(stderr, "Unsupported size %u bytes for new float arg setting at address 0x%lx\n", sz_bytes, vaddr);
+                exit(EXIT_FAILURE);
+            }
+            new_setting->is_pointer = IS_PTR_FALSE; // TODO: handle nested structs
+            new_setting->value_count = 2;
+            // new_setting->value_range[0].f = default_float_range[0];
+            // new_setting->value_range[1].f = default_float_range[1];
+            if (sz_bytes == 4) {
+                new_setting->value_range[0].f = default_float_range[0];
+                new_setting->value_range[1].f = default_float_range[1];
+            } else if (sz_bytes == 8) {
+                new_setting->value_range[0].d = default_double_range[0];
+                new_setting->value_range[1].d = default_double_range[1];
+            }
+
+            is_logging_valid = false;
+            printf("[MEMCB update_float_addr_var_mem_cb] New float arg setting '%s' for address 0x%lx creation done.\n", new_setting->name, vaddr);
+        }
+        // ArgSetting *new_setting = &arg_settings[arg_count++];
+        // printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
+    }
+    // }
 }
 
 // ------------------------------------------------------------
