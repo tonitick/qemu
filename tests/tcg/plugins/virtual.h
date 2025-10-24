@@ -38,7 +38,7 @@ bool find_rule_by_address(unsigned long long addr, rule_t **out_rule) {
 }
 
 // ---------------------------------------------------------------
-// vi impls
+// virtual instructions
 // ---------------------------------------------------------------
 
 // static void raiseirq(unsigned int cpu_index, void *udata);
@@ -330,6 +330,106 @@ void parse_rules_file(const char *filename) {
     fclose(f);
 }
 
+// ---------------------------------------------------------------
+// vi impl globals & helpers
+// ---------------------------------------------------------------
+// basic blocks
+#define MAX_BASIC_BLOCKS 1024
+unsigned long bb_starts[MAX_BASIC_BLOCKS];
+int bb_count = 0;
+void parse_basic_block_file(const char *filename);
+void parse_basic_block_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening basic block file");
+        return;
+    }
+    // format: 0x..., separated by newlines
+    char line[64];                 // plenty for one address + newline
+    while (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        uint64_t addr = strtoull(line, &end, 0);  // base 0 ⇒ handles “0x…”
+        if (errno || end == line) {               // conversion failed
+            fprintf(stderr, "Invalid address: %s", line);
+            continue;
+        }
+
+        if (bb_count < MAX_BASIC_BLOCKS) {
+            bb_starts[bb_count++] = addr;
+        } else {
+            fprintf(stderr, "Max basic blocks limit reached (%d), skipping rest\n", MAX_BASIC_BLOCKS);
+            break;
+        }
+    }
+    fclose(fp);
+
+    for (int i = 0; i < bb_count; i++) {
+        printf("Basic Block %d starts at: 0x%lx\n", i, bb_starts[i]);
+    }
+}
+
+// function start
+unsigned long func_start;
+void parse_function_start_file(const char *filename);
+void parse_function_start_file(const char *filename) {
+    // a single line file with function start address in hex
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening function start file");
+        return;
+    }
+
+    char line[64];
+    if (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        func_start = strtoull(line, &end, 0);
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid function start address: %s", line);
+        }
+    }
+    fclose(fp);
+    printf("Function start address parsed: 0x%lx\n", func_start);
+}
+
+// function end
+#define MAX_FUNCTION_ENDS 100
+unsigned long func_ends[MAX_FUNCTION_ENDS];
+int func_end_count = 0;
+void parse_function_end_file(const char *filename);
+void parse_function_end_file(const char *filename) {
+    // same format as basic block file
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening function end file");
+        return;
+    }
+    char line[64];                 // plenty for one address + newline
+    while (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        unsigned long addr = strtoull(line, &end, 0);
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid function end address: %s", line);
+            continue;
+        }
+
+        if (func_end_count < MAX_FUNCTION_ENDS) {
+            func_ends[func_end_count++] = addr;
+        } else {
+            fprintf(stderr, "Max function ends limit reached (%d), skipping rest\n", MAX_FUNCTION_ENDS);
+            break;
+        }
+    }
+    fclose(fp);
+
+    for (int i = 0; i < func_end_count; i++) {
+        printf("Function End %d at: 0x%lx\n", i, func_ends[i]);
+    }
+}
+
+bool function_reached = false;
 
 // ---------------------------------------------------------------
 // helpers

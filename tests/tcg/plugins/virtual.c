@@ -174,6 +174,8 @@ double get_random_double(double min, double max) {
 static int cur_iteration = 0;
 #define MAX_FUZZ_ITERATIONS 10000000
 static void randargs(unsigned int cpu_index, void *udata) {
+    function_reached = true;
+
     // printf("randargs - results for iteration %d:\n", cur_iteration);
     if (cur_iteration >= MAX_FUZZ_ITERATIONS) {
         printf("[VI randargs] reached max fuzzing iterations %d, dump existing path logs andexiting\n", MAX_FUZZ_ITERATIONS);
@@ -468,11 +470,13 @@ static void logbbstart(unsigned int cpu_index, void *udata) {
 // memory callbacks
 // --------------------------------------------------------------------------------------
 static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+    if (!function_reached) return;
+
     unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
     unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
     int is_store = qemu_plugin_mem_is_store(info);
-    fprintf(stdout, "[MEMCB update_addr_var_mem_cb] %s %u-byte @ 0x%08" PRIx64 "\n",
-            is_store ? "STORE" : "LOAD", sz_bytes, vaddr);
+    fprintf(stdout, "[MEMCB update_addr_var_mem_cb] %u-byte @ 0x%08" PRIx64 " %s\n",
+            sz_bytes, vaddr, is_store ? "STORE" : "LOAD");
     // TODO: handle non-fp memory variables
     // check whether the address is in arg_settings
     // Iterate through arg_settings to find a match
@@ -485,7 +489,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
         }
     }
     if (!found_arg_match) {
-        printf("[MEMCB update_float_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
+        printf("[MEMCB update_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
         // create new arg setting
         if (arg_count >= MAX_ARGS) {
             fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
@@ -495,7 +499,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
         if (parent_allocated_struct_idx >= 0) {
             assert(parent_allocated_struct_idx < allocated_struct_count);
             unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
-            printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
+            printf("[MEMCB update_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
             // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
             size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
             int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
@@ -542,20 +546,22 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
             }
 
             is_logging_valid = false;
-            printf("[MEMCB update_float_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+            printf("[MEMCB update_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
         }
         // ArgSetting *new_setting = &arg_settings[arg_count++];
-        printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
+        printf("[MEMCB update_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
     }
 }
 
 static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                    qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+    if (!function_reached) return;
+
     unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
     unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
     int is_store = qemu_plugin_mem_is_store(info);
-    fprintf(stdout, "[MEMCB update_float_addr_var_mem_cb] %s %u-bit @ 0x%08" PRIx64 "\n",
-            is_store ? "STORE" : "LOAD", 8u << sz_shift, vaddr);
+    fprintf(stdout, "[MEMCB update_float_addr_var_mem_cb] %u-bit @ 0x%08" PRIx64 " %s\n",
+            8u << sz_shift, vaddr, is_store ? "STORE" : "LOAD");
     /* optional: value seen */
     // qemu_plugin_mem_value val = qemu_plugin_mem_get_value(info);
 
@@ -668,45 +674,6 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     }
     // }
 }
-
-// ------------------------------------------------------------
-// Basic Block Parsing
-// ------------------------------------------------------------
-#define MAX_BASIC_BLOCKS 1024
-unsigned long bb_starts[MAX_BASIC_BLOCKS];
-int bb_count = 0;
-void parse_basic_block_file(const char *filename);
-void parse_basic_block_file(const char *filename) {
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        perror("Error opening basic block file");
-        return;
-    }
-    // format: 0x..., separated by newlines
-    char line[64];                 // plenty for one address + newline
-    while (fgets(line, sizeof(line), fp)) {
-        errno = 0;
-        char *end;
-        uint64_t addr = strtoull(line, &end, 0);  // base 0 ⇒ handles “0x…”
-        if (errno || end == line) {               // conversion failed
-            fprintf(stderr, "Invalid address: %s", line);
-            continue;
-        }
-
-        if (bb_count < MAX_BASIC_BLOCKS) {
-            bb_starts[bb_count++] = addr;
-        } else {
-            fprintf(stderr, "Max basic blocks limit reached (%d), skipping rest\n", MAX_BASIC_BLOCKS);
-            break;
-        }
-    }
-
-    for (int i = 0; i < bb_count; i++) {
-        printf("Basic Block %d starts at: 0x%lx\n", i, bb_starts[i]);
-    }
-    printf("Total basic blocks loaded: %d\n", bb_count);
-}
-
 
 int inline_ins = 0;
 #define MAX_MATCHES 10
@@ -948,10 +915,10 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
         return -1;
     }
 
-	const char *filename= get_arg("detour", argc, argv);
-    num_tuples = read_tuples_from_file(filename, address_tuples, MAX_TUPLES);
+	// const char *filename= get_arg("detour", argc, argv);
+    // num_tuples = read_tuples_from_file(filename, address_tuples, MAX_TUPLES);
 
-	filename= get_arg("modifier", argc, argv);
+	const char * filename= get_arg("modifier", argc, argv);
 	load_update_entries(filename);
 
 	filename = get_arg("virtual", argc, argv);
@@ -965,6 +932,12 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
     filename = get_arg("basicblocks", argc, argv);
     parse_basic_block_file(filename);
+
+    filename = get_arg("function_starts", argc, argv);
+    parse_function_start_file(filename);
+
+    filename = get_arg("function_ends", argc, argv);
+    parse_function_end_file(filename);
 
 	// filename = get_arg("logger", argc, argv);
 	// load_logger_config(filename);

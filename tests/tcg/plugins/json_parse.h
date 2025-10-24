@@ -18,7 +18,7 @@
 #include <cjson/cJSON.h>
 
 // ===============================================================================================================================
-// for randars
+// Basic args structs
 // ===============================================================================================================================
 
 #define MAX_NAME  32
@@ -54,6 +54,9 @@ typedef union {
 } ValueUnion;
 
 
+// ===============================================================================================================================
+// input
+// ===============================================================================================================================
 
 /* -------------------------------------------------------------------------- */
 /* Data structure describing one argument                                     */
@@ -217,29 +220,6 @@ void parse_arg_settings(const char *json)
 }
 
 /* -------------------------------------------------------------------------- */
-/* Utility: check whether mem var locations are equivalent or overlap         */
-/* -------------------------------------------------------------------------- */
-int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz);
-int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
-{
-    if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
-    if (a->sz == 0 || sz == 0) return 0; /* unknown size */
-    if (a->addr == addr && a->sz == sz) return 1; /* exact match */
-    return 0; /* no match */
-}
-
-
-int overlap_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz);
-int overlap_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
-{
-    if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
-    if (a->sz == 0 || sz == 0) return 0; /* unknown size */
-    if (same_mem_locs(a, addr, sz)) return 0; /* exact match */
-    if (a->addr < addr + sz && addr < a->addr + a->sz) return 1; /* overlap */
-    return 0; /* not overlap */
-}
-
-/* -------------------------------------------------------------------------- */
 /* Pretty-print the parsed data                                               */
 /* -------------------------------------------------------------------------- */
 void dump_arg_settings(void);
@@ -316,11 +296,6 @@ void dump_arg_settings(void)
 // ===============================================================================================================================
 // for ret
 // ===============================================================================================================================
-// typedef struct {
-//     uint32_t *buffer;  // Pointer to the buffer
-//     uint16_t index;     // Current index into the buffer
-// } Buffy;
-
 typedef struct {
     char name[MAX_NAME];
 
@@ -553,6 +528,29 @@ void parse_json_outs(const char *filename)
     free(json);
 
     dump_ret_settings();
+}
+
+// ===============================================================================================================================
+// Utility: check whether mem var locations are equivalent or overlap
+// ===============================================================================================================================
+int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz);
+int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
+{
+    if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
+    if (a->sz == 0 || sz == 0) return 0; /* unknown size */
+    if (a->addr == addr && a->sz == sz) return 1; /* exact match */
+    return 0; /* no match */
+}
+
+
+int overlap_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz);
+int overlap_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
+{
+    if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
+    if (a->sz == 0 || sz == 0) return 0; /* unknown size */
+    if (same_mem_locs(a, addr, sz)) return 0; /* exact match */
+    if (a->addr < addr + sz && addr < a->addr + a->sz) return 1; /* overlap */
+    return 0; /* not overlap */
 }
 
 #endif // JSON_PARSE_H
