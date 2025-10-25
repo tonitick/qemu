@@ -1,12 +1,3 @@
-/*
- * parse_args.c
- *
- * Stand-alone demo that loads the JSON file given on the command line,
- * parses it with cJSON, and prints a summary of every top-level entry.
- *
- * Build:  gcc -std=c11 -Wall -Wextra -pedantic parse_args.c -lcjson -o parse_args
- */
-
 #ifndef JSON_PARSE_H
 #define JSON_PARSE_H
 
@@ -477,6 +468,8 @@ typedef struct {
 
     IOValueType vtype;
     // Buffy log_buf; // needed by tcg logger, use VI for now
+
+    ValueUnion concrete_value;
 } RetSetting;
 RetSetting ret_settings[MAX_ARGS];
 size_t ret_count = 0;

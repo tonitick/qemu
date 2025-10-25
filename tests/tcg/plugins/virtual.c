@@ -199,7 +199,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
     else if (is_logging_valid) {
         // log previous iteration values
         // if (is_logging_valid) {
-        record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+        // record_in_out_pair(current_path, current_path_len, logged_in_values, logged_out_values);
+        record_in_out_pair(current_path, current_path_len);
         // }
         // clear
         // current_path_len = 0;
@@ -258,6 +259,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
         ArgSetting *setting = &arg_settings[i];
         // use range to generate random value
         ValueUnion value;
+        // potential pointer types
         if (setting->vtype == TYPE_UNKNOWN) { // only for potential pointer types, size = 4
             // treat as uint32 first
             // value_count shoule be 0
@@ -276,6 +278,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
             setting->value_range[1].u32 = default_int_range[1];
             value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
         }
+        // other types
         if (setting->vtype == TYPE_FLOAT) {
             // assert(setting->value_count == 2);
             if (setting->value_count == 1) {
@@ -355,6 +358,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
             exit(EXIT_FAILURE);
         }
 
+        // set value to corresponding location
         if (setting->location_type == TYPE_REG) {
             if (setting->vtype == TYPE_FLOAT) {
                 printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.f);
@@ -401,7 +405,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
         }
 
         // log values
-        logged_in_values[i] = value;
+        // logged_in_values[i] = value;
+        setting->concrete_value = value; // use a field in ArgSetting to store concrete input value instead
     }
 }
 
@@ -448,7 +453,8 @@ static void logrets(unsigned int cpu_index, void *udata) {
         }
 
         // log out values
-        logged_out_values[i] = value;
+        // logged_out_values[i] = value;
+        setting->concrete_value = value; // use a field in RetSetting to store concrete output value instead
     }
 }
 

@@ -14,7 +14,7 @@
 #define MAX_PATH_LENGTH 1024
 uint64_t current_path[MAX_PATH_LENGTH];
 size_t current_path_len = 0;
-ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS]; // a single input-output record
+// ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS]; // a single input-output record
 bool is_logging_valid = true;
 
 /* ---------- log buffers ---------- */
@@ -30,8 +30,9 @@ typedef ArgValueLogs RetValueLogs;
 typedef struct Entry {
     uint64_t      *key; // trace sequence, as key buffer
     size_t         len; // length of the trace sequence, #basic_blocks_visited * sizeof(uint64_t)
-    ArgValueLogs   args[MAX_ARGS]; /* inputs */
-    RetValueLogs   rets[MAX_ARGS]; /* outputs */
+    ArgValueLogs   args[MAX_ARGS]; // inputs
+    RetValueLogs   rets[MAX_ARGS]; // outputs
+    ValueUnion     concrete_inputs[MAX_ARGS]; // concrete inputs that trigger the path
     UT_hash_handle hh;
 } Entry;
 
@@ -63,13 +64,13 @@ Entry *trace_create(const uint64_t *seq, size_t len)
 }
 
 /* ---------- API: record + query ---------- */
-void record_trace_values(const uint64_t *seq, size_t len,
-                         const ValueUnion *arg_vals,
-                         const ValueUnion *ret_vals);
+void record_in_out_pair(const uint64_t *seq, size_t len);
+                        //  const ValueUnion *arg_vals,
+                        //  const ValueUnion *ret_vals);
 // Record values for a trace sequence
-void record_trace_values(const uint64_t *seq, size_t len,
-                                const ValueUnion *arg_vals,
-                                const ValueUnion *ret_vals)
+void record_in_out_pair(const uint64_t *seq, size_t len)
+                                // const ValueUnion *arg_vals,
+                                // const ValueUnion *ret_vals)
 {
     Entry *e = trace_find(seq, len);
     if (!e) e = trace_create(seq, len);
@@ -78,17 +79,17 @@ void record_trace_values(const uint64_t *seq, size_t len,
         ArgValueLogs *L = &e->args[i];
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (arg_settings[i].vtype == TYPE_FLOAT)
-            L->data[L->count++].f = arg_vals[i].f;
+            L->data[L->count++].f = arg_settings[i].concrete_value.f;
         else if (arg_settings[i].vtype == TYPE_DOUBLE)
-            L->data[L->count++].d = arg_vals[i].d;
+            L->data[L->count++].d = arg_settings[i].concrete_value.d;
         else if (arg_settings[i].vtype == TYPE_UINT32)
-            L->data[L->count++].u32 = arg_vals[i].u32;
+            L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
         else if (arg_settings[i].vtype == TYPE_UINT16)
-            L->data[L->count++].u32 = arg_vals[i].u32;
+            L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
         else if (arg_settings[i].vtype == TYPE_UINT8)
-            L->data[L->count++].u32 = arg_vals[i].u32;
+            L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
         else {
-            fprintf(stderr, "Unsupported arg type in record_trace_values for arg '%s'\n", arg_settings[i].name);
+            fprintf(stderr, "Unsupported arg type in record_in_out_pair for arg '%s'\n", arg_settings[i].name);
             exit(EXIT_FAILURE);
         }
     }
@@ -96,17 +97,23 @@ void record_trace_values(const uint64_t *seq, size_t len,
         RetValueLogs *L = &e->rets[i];
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (ret_settings[i].vtype == TYPE_FLOAT)
-            L->data[L->count++].f = ret_vals[i].f;
+            L->data[L->count++].f = ret_settings[i].concrete_value.f;
         else if (ret_settings[i].vtype == TYPE_DOUBLE)
-            L->data[L->count++].d = ret_vals[i].d;
+            L->data[L->count++].d = ret_settings[i].concrete_value.d;
         else if (ret_settings[i].vtype == TYPE_UINT32)
-            L->data[L->count++].u32 = ret_vals[i].u32;
+            L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
+        else if (ret_settings[i].vtype == TYPE_UINT16)
+            L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
+        else if (ret_settings[i].vtype == TYPE_UINT8)
+            L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
         else {
-            fprintf(stderr, "Unsupported ret type in record_trace_values for ret '%s'\n", ret_settings[i].name);
+            fprintf(stderr, "Unsupported ret type in record_in_out_pair for ret '%s'\n", ret_settings[i].name);
             exit(EXIT_FAILURE);
         }
     }
 }
+
+// void record_concrete_input()
 
 // ===============================================================================================================================
 // Utilities
@@ -164,9 +171,8 @@ void dump_all_path_logs(void)
     }
 }
 
-// #define MAX_PER_PATH_LOG_SIZE 100
-int check_path_log_size_and_dump(char* dump_dir); // TODO: dump all path logs
-int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
+int check_path_log_size_and_dump(char* dump_dir);
+int check_path_log_size_and_dump(char* dump_dir) {
     // if all path log size reach MAX_PER_PATH_LOG_SIZE, dump the related path logs
     Entry *e, *tmp;
 
