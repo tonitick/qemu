@@ -18,6 +18,39 @@
 #include <cjson/cJSON.h>
 
 // ===============================================================================================================================
+// File helpers
+// ===============================================================================================================================
+char *read_file_to_buf(const char *path);
+char *read_file_to_buf(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        fprintf(stderr, "cannot open '%s': %s\n", path, strerror(errno));
+        return NULL;
+    }
+    fseek(fp, 0, SEEK_END);
+    long len = ftell(fp);
+    rewind(fp);
+
+    char *buf = malloc((size_t)len + 1);
+    if (!buf) {
+        fprintf(stderr, "out of memory\n");
+        fclose(fp);
+        return NULL;
+    }
+    if (fread(buf, 1, (size_t)len, fp) != (size_t)len) {
+        fprintf(stderr, "short read from '%s'\n", path);
+        free(buf);
+        fclose(fp);
+        return NULL;
+    }
+    buf[len] = '\0';
+    fclose(fp);
+    return buf;
+}
+
+
+// ===============================================================================================================================
 // Basic args structs
 // ===============================================================================================================================
 
@@ -78,6 +111,8 @@ typedef struct {
     size_t value_count;
 
     int non_ptr_iters; /* iterator for non-pointer values */
+
+    ValueUnion concrete_value; /* for logging concrete input for paths */
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
@@ -101,8 +136,9 @@ int find_ptr_arg_by_addr(unsigned long addr, size_t sz) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Parse JSON text into an array of ArgSetting                                */
+/* Parsing utilities (parse_json_args)                                        */
 /* -------------------------------------------------------------------------- */
+// parse
 void parse_arg_settings(const char *json);
 void parse_arg_settings(const char *json)
 {
@@ -219,9 +255,7 @@ void parse_arg_settings(const char *json)
     arg_count = idx;  /* store the count in a global variable */
 }
 
-/* -------------------------------------------------------------------------- */
-/* Pretty-print the parsed data                                               */
-/* -------------------------------------------------------------------------- */
+// dump
 void dump_arg_settings(void);
 void dump_arg_settings(void)
 {
@@ -293,8 +327,143 @@ void dump_arg_settings(void)
     }
 }
 
+// export
+void parse_json_args(const char *filename);
+void parse_json_args(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_arg_settings(json);
+
+    free(json);
+
+    dump_arg_settings();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dumping utilities (arg_setting_to_json)                                    */
+/* -------------------------------------------------------------------------- */
+const char* io_value_type_to_str(IOValueType type);
+const char* io_value_type_to_str(IOValueType type) {
+    switch (type) {
+        case TYPE_FLOAT:   return "float";
+        case TYPE_DOUBLE:  return "double";
+        case TYPE_UINT32:  return "uint32";
+        case TYPE_UINT16:  return "uint16";
+        case TYPE_UINT8:   return "uint8";
+        case TYPE_UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+const char* is_pointer_type_to_string(IsPointerType type);
+const char* is_pointer_type_to_string(IsPointerType type) {
+    switch (type) {
+        case IS_PTR_TRUE:    return "true";
+        case IS_PTR_FALSE:   return "false";
+        case IS_PTR_UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+cJSON* create_json_from_value_union(const ValueUnion* val, IOValueType vtype);
+cJSON* create_json_from_value_union(const ValueUnion* val, IOValueType vtype) {
+    switch (vtype) {
+        case TYPE_FLOAT:
+            return cJSON_CreateNumber(val->f);
+        case TYPE_DOUBLE:
+            return cJSON_CreateNumber(val->d);
+        case TYPE_UINT32:
+        case TYPE_UINT16: // Per your struct comment, re-use u32 field
+        case TYPE_UINT8:  // Per your struct comment, re-use u32 field
+            return cJSON_CreateNumber(val->u32);
+        // Note: Your IOValueType does not have a uint64 type,
+        // so val->u64 is not handled here.
+        case TYPE_UNKNOWN:
+        default:
+            return cJSON_CreateNull();
+    }
+}
+
+// export
+cJSON* arg_setting_to_json(const ArgSetting* arg);
+cJSON* arg_setting_to_json(const ArgSetting* arg) {
+    cJSON *json_obj = cJSON_CreateObject();
+    if (json_obj == NULL) {
+        return NULL;
+    }
+
+    /*
+     * The 'name' field is no longer serialized here,
+     * as it's used as the key in the parent object (e.g., "arg1").
+     */
+
+    // Handle location_type (conditional)
+    if (arg->location_type == TYPE_REG) {
+        if (cJSON_AddStringToObject(json_obj, "reg", arg->reg) == NULL) {
+            goto error;
+        }
+    } else {
+        if (cJSON_AddNumberToObject(json_obj, "addr", arg->addr) == NULL) {
+            goto error;
+        }
+    }
+
+    // Handle size
+    if (cJSON_AddNumberToObject(json_obj, "size", arg->sz) == NULL) {
+        goto error;
+    }
+
+    // Handle is_pointer
+    if (cJSON_AddStringToObject(json_obj, "is_pointer", is_pointer_type_to_string(arg->is_pointer)) == NULL) {
+        goto error;
+    }
+
+    // Handle type
+    if (cJSON_AddStringToObject(json_obj, "type", io_value_type_to_str(arg->vtype)) == NULL) {
+        goto error;
+    }
+
+    // Handle value_range
+    cJSON *range_array = cJSON_CreateArray();
+    if (range_array == NULL) {
+        goto error;
+    }
+    cJSON_AddItemToObject(json_obj, "value_range", range_array); // Ownership transferred
+
+    for (size_t i = 0; i < arg->value_count; i++) {
+        cJSON *range_item = create_json_from_value_union(&arg->value_range[i], arg->vtype);
+        if (range_item == NULL) {
+            goto error;
+        }
+        cJSON_AddItemToArray(range_array, range_item); // Ownership transferred
+    }
+
+    // Handle concrete_value
+    cJSON *concrete_val = create_json_from_value_union(&arg->concrete_value, arg->vtype);
+    if (concrete_val == NULL) {
+        goto error;
+    }
+    cJSON_AddItemToObject(json_obj, "concrete_value", concrete_val); // Ownership transferred
+
+    // non_ptr_iters is skipped as requested
+
+    return json_obj;
+
+error:
+    // If any "Add" operation failed, delete the entire object and return NULL.
+    cJSON_Delete(json_obj);
+    return NULL;
+}
+
+
+
 // ===============================================================================================================================
-// for ret
+// ret
 // ===============================================================================================================================
 typedef struct {
     char name[MAX_NAME];
@@ -406,6 +575,22 @@ void dump_ret_settings(void)
     }
 }
 
+void parse_json_outs(const char *filename);
+void parse_json_outs(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_ret_settings(json);
+
+    free(json);
+
+    dump_ret_settings();
+}
+
 // used by tcg logger, use VI for now
 // void dump_ret_values(void);
 // void dump_ret_values(void) {
@@ -464,71 +649,6 @@ void dump_ret_settings(void)
 //         }
 //     }
 // }
-
-
-// ===============================================================================================================================
-// Helper: read json file to buffer
-// ===============================================================================================================================
-char *read_json_file(const char *path);
-char *read_json_file(const char *path)
-{
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        fprintf(stderr, "cannot open '%s': %s\n", path, strerror(errno));
-        return NULL;
-    }
-    fseek(fp, 0, SEEK_END);
-    long len = ftell(fp);
-    rewind(fp);
-
-    char *buf = malloc((size_t)len + 1);
-    if (!buf) {
-        fprintf(stderr, "out of memory\n");
-        fclose(fp);
-        return NULL;
-    }
-    if (fread(buf, 1, (size_t)len, fp) != (size_t)len) {
-        fprintf(stderr, "short read from '%s'\n", path);
-        free(buf);
-        fclose(fp);
-        return NULL;
-    }
-    buf[len] = '\0';
-    fclose(fp);
-    return buf;
-}
-
-void parse_json_args(const char *filename);
-void parse_json_args(const char *filename)
-{
-    char *json = read_json_file(filename);
-    if (!json) {
-        perror("read_json_file failed");
-        return;
-    }
-
-    parse_arg_settings(json);
-
-    free(json);
-
-    dump_arg_settings();
-}
-
-void parse_json_outs(const char *filename);
-void parse_json_outs(const char *filename)
-{
-    char *json = read_json_file(filename);
-    if (!json) {
-        perror("read_json_file failed");
-        return;
-    }
-
-    parse_ret_settings(json);
-
-    free(json);
-
-    dump_ret_settings();
-}
 
 // ===============================================================================================================================
 // Utility: check whether mem var locations are equivalent or overlap

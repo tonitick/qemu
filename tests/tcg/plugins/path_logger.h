@@ -10,19 +10,26 @@
 #include "uthash.h"
 #include "json_parse.h"
 
+/* ---------- current path ---------- */
+#define MAX_PATH_LENGTH 1024
+uint64_t current_path[MAX_PATH_LENGTH];
+size_t current_path_len = 0;
+ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS]; // a single input-output record
+bool is_logging_valid = true;
 
 /* ---------- log buffers ---------- */
 #define MAX_PER_PATH_LOG_SIZE 100
 typedef struct {
     size_t count;
-    union { float f[MAX_PER_PATH_LOG_SIZE]; uint32_t u32[MAX_PER_PATH_LOG_SIZE]; double d[MAX_PER_PATH_LOG_SIZE]; } data;
+    // union { float f[MAX_PER_PATH_LOG_SIZE]; uint32_t u32[MAX_PER_PATH_LOG_SIZE]; double d[MAX_PER_PATH_LOG_SIZE]; } data;
+    ValueUnion data[MAX_PER_PATH_LOG_SIZE];
 } ArgValueLogs;
 typedef ArgValueLogs RetValueLogs;
 
 /* ---------- uthash entry ---------- */
 typedef struct Entry {
-    uint64_t      *key;            /* trace sequence */
-    size_t         len;
+    uint64_t      *key; // trace sequence, as key buffer
+    size_t         len; // length of the trace sequence, #basic_blocks_visited * sizeof(uint64_t)
     ArgValueLogs   args[MAX_ARGS]; /* inputs */
     RetValueLogs   rets[MAX_ARGS]; /* outputs */
     UT_hash_handle hh;
@@ -34,7 +41,7 @@ Entry *g_map = NULL;
 size_t kaddrbytes(size_t n);  // convert number of addresses to bytes
 size_t kaddrbytes(size_t n) { return n * sizeof(uint64_t); }
 
-Entry *trace_find(const uint64_t *seq, size_t len);
+Entry *trace_find(const uint64_t *seq, size_t len); // key: uint64_t *key (seq) + size_t len
 Entry *trace_find(const uint64_t *seq, size_t len)
 {
     Entry *e = NULL;
@@ -45,10 +52,8 @@ Entry *trace_find(const uint64_t *seq, size_t len)
 Entry *trace_create(const uint64_t *seq, size_t len);
 Entry *trace_create(const uint64_t *seq, size_t len)
 {
-    // Entry *e = calloc(1, sizeof *e);
     Entry *e = (Entry *)calloc(1, sizeof *e);
     if (!e) { perror("calloc"); exit(1); }
-    // e->key = malloc(kaddrbytes(len));
     e->key = (uint64_t *)malloc(kaddrbytes(len));
     if (!e->key) { perror("malloc key"); exit(1); }
     memcpy(e->key, seq, kaddrbytes(len));
@@ -73,15 +78,15 @@ void record_trace_values(const uint64_t *seq, size_t len,
         ArgValueLogs *L = &e->args[i];
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (arg_settings[i].vtype == TYPE_FLOAT)
-            L->data.f[L->count++] = arg_vals[i].f;
+            L->data[L->count++].f = arg_vals[i].f;
         else if (arg_settings[i].vtype == TYPE_DOUBLE)
-            L->data.d[L->count++] = arg_vals[i].d;
+            L->data[L->count++].d = arg_vals[i].d;
         else if (arg_settings[i].vtype == TYPE_UINT32)
-            L->data.u32[L->count++] = arg_vals[i].u32;
+            L->data[L->count++].u32 = arg_vals[i].u32;
         else if (arg_settings[i].vtype == TYPE_UINT16)
-            L->data.u32[L->count++] = arg_vals[i].u32;
+            L->data[L->count++].u32 = arg_vals[i].u32;
         else if (arg_settings[i].vtype == TYPE_UINT8)
-            L->data.u32[L->count++] = arg_vals[i].u32;
+            L->data[L->count++].u32 = arg_vals[i].u32;
         else {
             fprintf(stderr, "Unsupported arg type in record_trace_values for arg '%s'\n", arg_settings[i].name);
             exit(EXIT_FAILURE);
@@ -91,11 +96,11 @@ void record_trace_values(const uint64_t *seq, size_t len,
         RetValueLogs *L = &e->rets[i];
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
         if (ret_settings[i].vtype == TYPE_FLOAT)
-            L->data.f[L->count++] = ret_vals[i].f;
+            L->data[L->count++].f = ret_vals[i].f;
         else if (ret_settings[i].vtype == TYPE_DOUBLE)
-            L->data.d[L->count++] = ret_vals[i].d;
+            L->data[L->count++].d = ret_vals[i].d;
         else if (ret_settings[i].vtype == TYPE_UINT32)
-            L->data.u32[L->count++] = ret_vals[i].u32;
+            L->data[L->count++].u32 = ret_vals[i].u32;
         else {
             fprintf(stderr, "Unsupported ret type in record_trace_values for ret '%s'\n", ret_settings[i].name);
             exit(EXIT_FAILURE);
@@ -103,15 +108,24 @@ void record_trace_values(const uint64_t *seq, size_t len,
     }
 }
 
-/* ---------- NEW: expose a readonly handle ---------- */
+// ===============================================================================================================================
+// Utilities
+// ===============================================================================================================================
+void clear_all_path_logs(void);
+void clear_all_path_logs(void)
+{
+    Entry *e, *tmp;
+    HASH_ITER(hh, g_map, e, tmp) { HASH_DEL(g_map, e); free(e->key); free(e); }
+}
+
+/* ---------- Get a read-only handle to the trace series ---------- */
 const Entry *get_trace_series(const uint64_t *seq, size_t len);
-// Get a read-only handle to the trace series
 const Entry *get_trace_series(const uint64_t *seq, size_t len)
 {
     return trace_find(seq, len);
 }
 
-/* ---------- demo helpers ---------- */
+/* ---------- Dump in-out pairs ---------- */
 void dump_all_path_logs(void);
 void dump_all_path_logs(void)
 {
@@ -125,20 +139,26 @@ void dump_all_path_logs(void)
         for (size_t i = 0; i < arg_count; ++i) {
             printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
             for (size_t j = 0; j < e->args[i].count; ++j) {
-                if (arg_settings[i].vtype == TYPE_FLOAT)
-                    printf("       %g\n", e->args[i].data.f[j]);
-                else
-                    printf("       %u\n", e->args[i].data.u32[j]);
+                if (arg_settings[i].vtype == TYPE_FLOAT) {
+                    printf("       %g\n", e->args[i].data[j].f);
+                } else if (arg_settings[i].vtype == TYPE_DOUBLE) {
+                    printf("       %g\n", e->args[i].data[j].d);
+                } else {
+                    printf("       %u\n", e->args[i].data[j].u32);
+                }
             }
         }
 
         for (size_t i = 0; i < ret_count; ++i) {
             printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
             for (size_t j = 0; j < e->rets[i].count; ++j) {
-                if (ret_settings[i].vtype == TYPE_FLOAT)
-                    printf("       %g\n", e->rets[i].data.f[j]);
-                else
-                    printf("       %u\n", e->rets[i].data.u32[j]);
+                if (ret_settings[i].vtype == TYPE_FLOAT) {
+                    printf("       %g\n", e->rets[i].data[j].f);
+                } else if (ret_settings[i].vtype == TYPE_DOUBLE) {
+                    printf("       %g\n", e->rets[i].data[j].d);
+                } else {
+                    printf("       %u\n", e->rets[i].data[j].u32);
+                }
             }
         }
     }
@@ -192,8 +212,8 @@ int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
                     printf("  IN (FLOAT)  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
                     fprintf(f, "[IN] %s: ", arg_settings[i].name);
                     for (size_t j = 0; j < e->args[i].count; ++j) {
-                        printf("       %g\n", e->args[i].data.f[j]);
-                        fprintf(f, "%.10f ", e->args[i].data.f[j]);
+                        printf("       %g\n", e->args[i].data[j].f);
+                        fprintf(f, "%.10f ", e->args[i].data[j].f);
                     }
                     fprintf(f, "\n");
                 }
@@ -201,8 +221,8 @@ int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
                     printf("  IN (DOUBLE)  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
                     fprintf(f, "[IN] %s: ", arg_settings[i].name);
                     for (size_t j = 0; j < e->args[i].count; ++j) {
-                        printf("       %g\n", e->args[i].data.d[j]);
-                        fprintf(f, "%.10g ", e->args[i].data.d[j]);
+                        printf("       %g\n", e->args[i].data[j].d);
+                        fprintf(f, "%.10g ", e->args[i].data[j].d);
                     }
                     fprintf(f, "\n");
                 }
@@ -213,8 +233,8 @@ int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
                     printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
                     fprintf(f, "[OUT] %s: ", ret_settings[i].name);
                     for (size_t j = 0; j < e->rets[i].count; ++j) {
-                        printf("       %g\n", e->rets[i].data.f[j]);
-                        fprintf(f, "%.10f ", e->rets[i].data.f[j]);
+                        printf("       %g\n", e->rets[i].data[j].f);
+                        fprintf(f, "%.10f ", e->rets[i].data[j].f);
                     }
                     fprintf(f, "\n");
                 }
@@ -222,8 +242,8 @@ int check_path_log_size_and_dump(char* dump_dir) { // TODO: dump all path logs
                     printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
                     fprintf(f, "[OUT] %s: ", ret_settings[i].name);
                     for (size_t j = 0; j < e->rets[i].count; ++j) {
-                        printf("       %g\n", e->rets[i].data.d[j]);
-                        fprintf(f, "%.10g ", e->rets[i].data.d[j]);
+                        printf("       %g\n", e->rets[i].data[j].d);
+                        fprintf(f, "%.10g ", e->rets[i].data[j].d);
                     }
                     fprintf(f, "\n");
                 }
@@ -268,8 +288,8 @@ void dump_existing_path_logs(char* dump_dir) {
                     printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
                     fprintf(f, "[IN] %s: ", arg_settings[i].name);
                     for (size_t j = 0; j < e->args[i].count; ++j) {
-                        printf("       %g\n", e->args[i].data.f[j]);
-                        fprintf(f, "%.10f ", e->args[i].data.f[j]);
+                        printf("       %g\n", e->args[i].data[j].f);
+                        fprintf(f, "%.10f ", e->args[i].data[j].f);
                     }
                     fprintf(f, "\n");
                 }
@@ -277,8 +297,8 @@ void dump_existing_path_logs(char* dump_dir) {
                     printf("  IN  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
                     fprintf(f, "[IN] %s: ", arg_settings[i].name);
                     for (size_t j = 0; j < e->args[i].count; ++j) {
-                        printf("       %g\n", e->args[i].data.d[j]);
-                        fprintf(f, "%.10f ", e->args[i].data.d[j]);
+                        printf("       %g\n", e->args[i].data[j].d);
+                        fprintf(f, "%.10g ", e->args[i].data[j].d);
                     }
                     fprintf(f, "\n");
                 }
@@ -289,8 +309,8 @@ void dump_existing_path_logs(char* dump_dir) {
                     printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
                     fprintf(f, "[OUT] %s: ", ret_settings[i].name);
                     for (size_t j = 0; j < e->rets[i].count; ++j) {
-                        printf("       %g\n", e->rets[i].data.f[j]);
-                        fprintf(f, "%.10f ", e->rets[i].data.f[j]);
+                        printf("       %g\n", e->rets[i].data[j].f);
+                        fprintf(f, "%.10f ", e->rets[i].data[j].f);
                     }
                     fprintf(f, "\n");
                 }
@@ -298,8 +318,8 @@ void dump_existing_path_logs(char* dump_dir) {
                     printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
                     fprintf(f, "[OUT] %s: ", ret_settings[i].name);
                     for (size_t j = 0; j < e->rets[i].count; ++j) {
-                        printf("       %g\n", e->rets[i].data.d[j]);
-                        fprintf(f, "%.10f ", e->rets[i].data.d[j]);
+                        printf("       %g\n", e->rets[i].data[j].d);
+                        fprintf(f, "%.10g ", e->rets[i].data[j].d);
                     }
                     fprintf(f, "\n");
                 }
@@ -308,19 +328,7 @@ void dump_existing_path_logs(char* dump_dir) {
     }
 }
 
-void clear_all_path_logs(void);
-void clear_all_path_logs(void)
-{
-    Entry *e, *tmp;
-    HASH_ITER(hh, g_map, e, tmp) { HASH_DEL(g_map, e); free(e->key); free(e); }
-}
-
-/* ---------- current path ---------- */
-#define MAX_PATH_LENGTH 1024
-uint64_t current_path[MAX_PATH_LENGTH];
-size_t current_path_len = 0;
-ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS]; // a single input-output record
-bool is_logging_valid = true;
+/* ---------- Dump concrete input that trigger the path ---------- */
 
 
 #endif // PATH_LOGGER_H
