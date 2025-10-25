@@ -199,8 +199,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
     else if (is_logging_valid) {
         // log previous iteration values
         // if (is_logging_valid) {
-        // record_in_out_pair(current_path, current_path_len, logged_in_values, logged_out_values);
-        record_in_out_pair(current_path, current_path_len);
+        // record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+        record_trace_values(current_path, current_path_len);
         // }
         // clear
         // current_path_len = 0;

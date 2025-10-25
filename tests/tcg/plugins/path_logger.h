@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
 #include "uthash.h"
 #include "json_parse.h"
 
@@ -64,17 +67,18 @@ Entry *trace_create(const uint64_t *seq, size_t len)
 }
 
 /* ---------- API: record + query ---------- */
-void record_in_out_pair(const uint64_t *seq, size_t len);
+void record_trace_values(const uint64_t *seq, size_t len);
                         //  const ValueUnion *arg_vals,
                         //  const ValueUnion *ret_vals);
 // Record values for a trace sequence
-void record_in_out_pair(const uint64_t *seq, size_t len)
+void record_trace_values(const uint64_t *seq, size_t len)
                                 // const ValueUnion *arg_vals,
                                 // const ValueUnion *ret_vals)
 {
     Entry *e = trace_find(seq, len);
     if (!e) e = trace_create(seq, len);
 
+    // input/ouput pairs
     for (size_t i = 0; i < arg_count; ++i) {
         ArgValueLogs *L = &e->args[i];
         if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
@@ -89,7 +93,7 @@ void record_in_out_pair(const uint64_t *seq, size_t len)
         else if (arg_settings[i].vtype == TYPE_UINT8)
             L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
         else {
-            fprintf(stderr, "Unsupported arg type in record_in_out_pair for arg '%s'\n", arg_settings[i].name);
+            fprintf(stderr, "Unsupported arg type in record_trace_values for arg '%s'\n", arg_settings[i].name);
             exit(EXIT_FAILURE);
         }
     }
@@ -107,13 +111,30 @@ void record_in_out_pair(const uint64_t *seq, size_t len)
         else if (ret_settings[i].vtype == TYPE_UINT8)
             L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
         else {
-            fprintf(stderr, "Unsupported ret type in record_in_out_pair for ret '%s'\n", ret_settings[i].name);
+            fprintf(stderr, "Unsupported ret type in record_trace_values for ret '%s'\n", ret_settings[i].name);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // concrete path inputs
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (arg_settings[i].vtype == TYPE_FLOAT)
+            e->concrete_inputs[i].f = arg_settings[i].concrete_value.f;
+        else if (arg_settings[i].vtype == TYPE_DOUBLE)
+            e->concrete_inputs[i].d = arg_settings[i].concrete_value.d;
+        else if (arg_settings[i].vtype == TYPE_UINT32)
+            e->concrete_inputs[i].u32 = arg_settings[i].concrete_value.u32;
+        else if (arg_settings[i].vtype == TYPE_UINT16)
+            e->concrete_inputs[i].u32 = arg_settings[i].concrete_value.u32;
+        else if (arg_settings[i].vtype == TYPE_UINT8)
+            e->concrete_inputs[i].u32 = arg_settings[i].concrete_value.u32;
+        else {
+            fprintf(stderr, "Unsupported arg type in record_trace_values for arg '%s'\n", arg_settings[i].name);
             exit(EXIT_FAILURE);
         }
     }
 }
 
-// void record_concrete_input()
 
 // ===============================================================================================================================
 // Utilities
@@ -133,7 +154,7 @@ const Entry *get_trace_series(const uint64_t *seq, size_t len)
 }
 
 /* ---------- Dump in-out pairs ---------- */
-void dump_all_path_logs(void);
+void dump_all_path_logs(void); // only to stdout for debugging
 void dump_all_path_logs(void)
 {
     Entry *e, *tmp;
@@ -199,8 +220,18 @@ int check_path_log_size_and_dump(char* dump_dir) {
         // dump all path logs
         int path_id = 0;
         HASH_ITER(hh, g_map, e, tmp) {
-            char filepath[256];
-            snprintf(filepath, sizeof(filepath), "%s/path_id_%d_len_%zu.txt", dump_dir, path_id++, e->len);
+            char path_dir[256] = {0};
+            snprintf(path_dir, sizeof(path_dir), "%s/path_id_%d_len_%zu", dump_dir, path_id++, e->len);
+            // create dir
+            if (mkdir(path_dir, 0755) == -1) {
+                if (errno != EEXIST) {
+                    printf("Failed to create directory %s: %s\n", path_dir, strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
+            }
+            char filepath[256] = {0};
+            // snprintf(filepath, sizeof(filepath), "%s/path_id_%d_len_%zu.txt", dump_dir, path_id++, e->len);
+            snprintf(filepath, sizeof(filepath), "%s/in_outs.txt", path_dir);
             FILE *f = fopen(filepath, "w");
             if (!f) {
                 perror("fopen");
@@ -275,8 +306,18 @@ void dump_existing_path_logs(char* dump_dir) {
             }
         }
         if (need_dump) {
-            char filepath[256];
+            char path_dir[256] = {0};
+            snprintf(path_dir, sizeof(path_dir), "%s/path_id_%d_len_%zu", dump_dir, path_id++, e->len);
+            // create dir
+            if (mkdir(path_dir, 0755) == -1) {
+                if (errno != EEXIST) {
+                    printf("Failed to create directory %s: %s\n", path_dir, strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
+            }
+            char filepath[256] = {0};
             snprintf(filepath, sizeof(filepath), "%s/path_id_%d_len_%zu.txt", dump_dir, path_id++, e->len);
+            snprintf(filepath, sizeof(filepath), "%s/in_outs.txt", path_dir);
             FILE *f = fopen(filepath, "w");
             if (!f) {
                 perror("fopen");
