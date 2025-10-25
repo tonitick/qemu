@@ -220,6 +220,7 @@ int check_path_log_size_and_dump(char* dump_dir) {
         // dump all path logs
         int path_id = 0;
         HASH_ITER(hh, g_map, e, tmp) {
+            /* 1. input-output pairs */
             char path_dir[256] = {0};
             snprintf(path_dir, sizeof(path_dir), "%s/path_id_%d_len_%zu", dump_dir, path_id++, e->len);
             // create dir
@@ -285,6 +286,53 @@ int check_path_log_size_and_dump(char* dump_dir) {
                     fprintf(f, "\n");
                 }
             }
+            fclose(f);
+
+            /* 2. basic block trace sequences */
+            char trace_filepath[256] = {0};
+            snprintf(trace_filepath, sizeof(trace_filepath), "%s/bb_seqs.txt", path_dir);
+            FILE *trace_f = fopen(trace_filepath, "w");
+            if (!trace_f) {
+                perror("fopen");
+                continue;
+            }
+            for (size_t i = 0; i < e->len; ++i) {
+                fprintf(trace_f, "0x%08" PRIx64 "\n", e->key[i]);
+            }
+            fclose(trace_f);
+
+            /* 3. concrete input values in json*/
+            cJSON *root = cJSON_CreateObject();
+            if (root == NULL) {
+                fprintf(stderr, "Failed to create cJSON root object\n");
+                continue;
+            }
+            for (size_t i = 0; i < arg_count; ++i) {
+                cJSON *arg_item = arg_setting_to_json(&arg_settings[i]);
+                if (arg_item == NULL) {
+                    fprintf(stderr, "Failed to convert arg_setting to JSON for arg '%s'\n", arg_settings[i].name);
+                    continue;
+                }
+                cJSON_AddItemToObject(root, arg_settings[i].name, arg_item);
+            }
+            char concrete_input_filepath[256] = {0};
+            snprintf(concrete_input_filepath, sizeof(concrete_input_filepath), "%s/concrete_inputs.json", path_dir);
+            char *json_str = cJSON_Print(root);
+            if (json_str == NULL) {
+                fprintf(stderr, "Failed to print cJSON to string\n");
+                cJSON_Delete(root);
+                continue;
+            }
+            FILE *json_f = fopen(concrete_input_filepath, "w");
+            if (!json_f) {
+                perror("fopen");
+                cJSON_Delete(root);
+                fclose(f);
+                continue;
+            }
+            fprintf(json_f, "%s\n", json_str);
+            fclose(json_f);
+            cJSON_free(json_str);
         }
         return 1; // success
     }
@@ -306,6 +354,7 @@ void dump_existing_path_logs(char* dump_dir) {
             }
         }
         if (need_dump) {
+            /* 1. input-output pairs */
             char path_dir[256] = {0};
             snprintf(path_dir, sizeof(path_dir), "%s/path_id_%d_len_%zu", dump_dir, path_id++, e->len);
             // create dir
@@ -371,6 +420,53 @@ void dump_existing_path_logs(char* dump_dir) {
                     fprintf(f, "\n");
                 }
             }
+            fclose(f);
+
+            /* 2. basic block trace sequences */
+            char trace_filepath[256] = {0};
+            snprintf(trace_filepath, sizeof(trace_filepath), "%s/bb_seqs.txt", path_dir);
+            FILE *trace_f = fopen(trace_filepath, "w");
+            if (!trace_f) {
+                perror("fopen");
+                continue;
+            }
+            for (size_t i = 0; i < e->len; ++i) {
+                fprintf(trace_f, "0x%08" PRIx64 "\n", e->key[i]);
+            }
+            fclose(trace_f);
+
+            /* 3. concrete input values in json*/
+            cJSON *root = cJSON_CreateObject();
+            if (root == NULL) {
+                fprintf(stderr, "Failed to create cJSON root object\n");
+                continue;
+            }
+            for (size_t i = 0; i < arg_count; ++i) {
+                cJSON *arg_item = arg_setting_to_json(&arg_settings[i]);
+                if (arg_item == NULL) {
+                    fprintf(stderr, "Failed to convert arg_setting to JSON for arg '%s'\n", arg_settings[i].name);
+                    continue;
+                }
+                cJSON_AddItemToObject(root, arg_settings[i].name, arg_item);
+            }
+            char concrete_input_filepath[256] = {0};
+            snprintf(concrete_input_filepath, sizeof(concrete_input_filepath), "%s/concrete_inputs.json", path_dir);
+            char *json_str = cJSON_Print(root);
+            if (json_str == NULL) {
+                fprintf(stderr, "Failed to print cJSON to string\n");
+                cJSON_Delete(root);
+                continue;
+            }
+            FILE *json_f = fopen(concrete_input_filepath, "w");
+            if (!json_f) {
+                perror("fopen");
+                cJSON_Delete(root);
+                fclose(f);
+                continue;
+            }
+            fprintf(json_f, "%s\n", json_str);
+            fclose(json_f);
+            cJSON_free(json_str);
         }
     }
 }
