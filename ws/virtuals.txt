@@ -1,3 +1,0 @@
-0x8101e84 randargs
-0x8101e9e logrets
-0x8101ec2 logrets
