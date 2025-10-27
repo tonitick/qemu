@@ -569,3 +569,17 @@ uint64_t qemu_plugin_u64_sum(qemu_plugin_u64 entry)
     return total;
 }
 
+
+void qemu_plugin_vcpu_exit_tb_now(void)
+{
+    CPUState *cpu = current_cpu;
+    if (!cpu) return;
+    /* For TCG, this causes cpu_loop to leave at the next safe point */
+// #if defined(CONFIG_TCG)
+    cpu_loop_exit(cpu);                 /* sets exit_request */
+    /* optional: also flush jmp cache to avoid falling back into same TB */
+    // tb_flush_jmp_cache(cpu);
+// #else
+    /* No-op under KVM/TCG-accel mismatch */
+// #endif
+}

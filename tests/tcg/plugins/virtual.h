@@ -2,434 +2,7 @@
 #define VIRTUAL_H
 
 #include <qemu-plugin.h>
-
-// ---------------------------------------------------------------
-// global structs
-// ---------------------------------------------------------------
-#define MAX_RULES 256
-
-typedef void (*cb_func_t)(unsigned int cpu_index, void *userdata);
-
-typedef struct {
-    const char *name;
-    cb_func_t func;
-} cb_entry_t;
-
-typedef struct {
-    unsigned long long address;
-    cb_func_t func;        // function pointer, NOT the name
-    char args[384];
-} rule_t;
-
-rule_t rules[MAX_RULES];
-size_t rules_count = 0;
-
-bool find_rule_by_address(unsigned long long addr, rule_t **out_rule);
-bool find_rule_by_address(unsigned long long addr, rule_t **out_rule) {
-    for (size_t i = 0; i < rules_count; i++) {
-        if (rules[i].address == addr) {
-            if (out_rule) {
-                *out_rule = &rules[i];
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
-// ---------------------------------------------------------------
-// virtual instructions
-// ---------------------------------------------------------------
-
-// static void raiseirq(unsigned int cpu_index, void *udata);
-// static void updatepc(unsigned int cpu_index, void *udata);
-// static void updatereg(unsigned int cpu_index, void *udata);
-// static void updatemem(unsigned int cpu_index, void *udata);
-// static void randstate(unsigned int cpu_index, void *udata);
-static void randargs(unsigned int cpu_index, void *udata);
-static void logrets(unsigned int cpu_index, void *udata);
-static void clearpathlogs(unsigned int cpu_index, void *udata);
-static void logbbstart(unsigned int cpu_index, void *udata);
-// static void dumplogger(unsigned int cpu_index, void *udata);
-// static void dyninst(unsigned int cpu_index, void *udata);
-// static void dyninst_lib(unsigned int cpu_index, void *udata);
-
-// ----- updatemem -----
-// #define MAX_BUFFER_SIZE 256
-
-// typedef struct {
-//     uint32_t address;
-//     char mode; // 'r' or 'w'
-//     uint32_t length;
-//     uint8_t buffer[MAX_BUFFER_SIZE];
-// } MemAccess;
-
-
-// int parse_update_mem_arg(const char *input, MemAccess *out);
-// int parse_update_mem_arg(const char *input, MemAccess *out) {
-//     if (!input || !out) return -1;
-
-//     // Temporary copy of input string for tokenizing
-// 	char *temp = malloc(strlen(input) + 1);
-// 	if (!temp) return -1;
-// 	strcpy(temp, input);
-
-
-//     char *token = strtok(temp, ":");
-//     if (!token) { free(temp); return -1;}
-//     out->address = strtoul(token, NULL, 0); // parse address
-
-//     token = strtok(NULL, ":");
-//     if (!token || (token[0] != 'r' && token[0] != 'w')) return -1;
-//     out->mode = token[0]; // parse mode
-
-//     token = strtok(NULL, ":");
-//     if (!token) { free(temp); return -1;}
-//     out->length = strtoul(token, NULL, 0); // parse length
-//     if (out->length > MAX_BUFFER_SIZE) return -1;
-
-//     token = strtok(NULL, ":");
-//     if (!token) { free(temp); return -1;}
-
-//     // Now parse comma-separated bytes
-//     uint32_t i = 0;
-//     char *byte_str = strtok(token, ",");
-//     while (byte_str && i < out->length) {
-//         out->buffer[i++] = (uint8_t)strtoul(byte_str, NULL, 0);
-//         byte_str = strtok(NULL, ",");
-//     }
-
-//     if (i != out->length) { printf("Invalid Argument \n"); free(temp); return -1;}
-
-// 	free(temp);
-//     return 0; // success
-// }
-
-// static void updatemem(unsigned int cpu_index, void *udata) {
-// 	const char *input = (const char *) udata;
-// 	MemAccess mem;
-
-//     if (parse_update_mem_arg(input, &mem) == 0) {
-// 		if (mem.mode == 'r') {
-// 			qemu_plugin_read_memory(mem.address, mem.buffer, mem.length);
-// 		} else {
-// 			qemu_plugin_write_memory(mem.address, mem.buffer, mem.length);
-// 		}
-// 	}
-// }
-
-
-// ----- dyninst, dyninst_lib -----
-// #define MAX_FILENAME_LEN 256
-
-// typedef struct {
-//     uint64_t addr;
-//     char filename[MAX_FILENAME_LEN];  // Fixed-size buffer
-// } AddrFilePair;
-
-// static void dyninst_lib(unsigned int cpu_index, void *udata) {
-// 	qemu_plugin_load_elf((char *) udata);
-// }
-
-
-// AddrFilePair parse_addr_file(const char *input);
-// AddrFilePair parse_addr_file(const char *input) {
-//     AddrFilePair result = {0, {0}};
-
-//     const char *colon = strchr(input, ':');
-//     if (!colon) {
-//         fprintf(stderr, "Invalid format: no ':' found.\n");
-//         return result;
-//     }
-
-//     // Parse address part
-//     char addr_str[32] = {0}; // Enough for 64-bit address string
-//     size_t addr_len = colon - input;
-
-//     if (addr_len >= sizeof(addr_str)) {
-//         fprintf(stderr, "Address string too long.\n");
-//         return result;
-//     }
-
-//     strncpy(addr_str, input, addr_len);
-//     addr_str[addr_len] = '\0';
-
-//     result.addr = strtoull(addr_str, NULL, 0); // auto-detect 0x
-
-//     // Copy filename part into fixed buffer
-//     const char *filename = colon + 1;
-
-//     if (strlen(filename) >= MAX_FILENAME_LEN) {
-//         fprintf(stderr, "Filename too long. Truncated.\n");
-//         strncpy(result.filename, filename, MAX_FILENAME_LEN - 1);
-//         result.filename[MAX_FILENAME_LEN - 1] = '\0'; // Null-terminate
-//     } else {
-//         strcpy(result.filename, filename);
-//     }
-
-//     return result;
-// }
-
-// // Reads entire file into a buffer.
-// // Returns pointer to buffer and sets *length to file size.
-// // Returns NULL on error.
-// void* read_file(const char *filename, size_t *length);
-// void* read_file(const char *filename, size_t *length) {
-//     FILE *file = fopen(filename, "rb");
-//     if (!file) {
-//         perror("Error opening file");
-//         return NULL;
-//     }
-
-//     // Seek to end to find file size
-//     if (fseek(file, 0, SEEK_END) != 0) {
-//         perror("Error seeking file");
-//         fclose(file);
-//         return NULL;
-//     }
-
-//     long file_size = ftell(file);
-//     if (file_size < 0) {
-//         perror("Error telling file position");
-//         fclose(file);
-//         return NULL;
-//     }
-//     rewind(file); // Go back to start
-
-//     // Allocate buffer
-//     void *buffer = malloc(file_size);
-//     if (!buffer) {
-//         perror("Memory allocation failed");
-//         fclose(file);
-//         return NULL;
-//     }
-
-//     // Read entire file into buffer
-//     size_t read_size = fread(buffer, 1, file_size, file);
-//     if (read_size != file_size) {
-//         perror("Error reading file");
-//         free(buffer);
-//         fclose(file);
-//         return NULL;
-//     }
-
-//     fclose(file);
-//     *length = file_size; // Return size
-//     return buffer;
-// }
-
-// void dyninst(unsigned int cpu_index, void *udata) {
-// 	AddrFilePair parsed = parse_addr_file((char *)udata);
-	
-// 	size_t file_len = 0;
-// 	void *file_buf = read_file(parsed.filename, &file_len);
-// 	if (file_buf) {
-// 		qemu_plugin_write_memory(parsed.addr, file_buf, file_len);
-// 		free(file_buf);
-// 	}
-// }
-
-// ----- raiseirq, updatepc, updatereg -----
-// static void raiseirq(unsigned int cpu_index, void *udata){
-// 	qemu_plugin_raise_irq(15);
-// }
-
-// static void updatepc(unsigned int cpu_index, void *udata)
-// {
-// 	// BUGON: This wont' work anymore
-// 	uint32_t val = 0xdeadbeef;
-// 	val = (0x106cc | 1);
-// 	qemu_plugin_set_register((uint8_t *)&val, 15);
-// }
-
-// static void updatereg(unsigned int cpu_index, void *udata)
-// {
-//     ValueUnion vn;
-//     vn.f = 6.28;
-//     qemu_plugin_set_register((uint8_t *)&vn, 26); //  26 is s0
-// }
-
-
-// ---------------------------------------------------------------
-// cb_registry
-// ---------------------------------------------------------------
-
-cb_entry_t cb_registry[] = {
-    // { "updatepc", updatepc },
-	// { "updatereg", updatereg},
-	// { "updatemem", updatemem},
-	// { "randstate", randstate},
-    { "randargs", randargs },
-    { "logrets", logrets},
-    { "clearpathlogs", clearpathlogs},
-    { "logbbstart", logbbstart},
-    // { "raiseirq", raiseirq },
-	// { "dumplog", dumplogger},
-	// { "dyninst", dyninst},
-	// { "dyninst_lib", dyninst_lib},
-};
-
-const size_t cb_registry_len = sizeof(cb_registry) / sizeof(cb_registry[0]);
-
-static cb_func_t lookup_callback(const char *name) {
-    for (size_t i = 0; i < cb_registry_len; i++) {
-        if (strcmp(cb_registry[i].name, name) == 0)
-            return cb_registry[i].func;
-    }
-    return NULL;
-}
-
-void parse_rules_file(const char *filename);
-void parse_rules_file(const char *filename) {
-    FILE *f = fopen(filename, "r");
-    if (!f) {
-        perror("Failed to open rules file");
-        return;
-    }
-
-    char line[512];
-    while (fgets(line, sizeof(line), f)) {
-        if (line[0] == '\n' || line[0] == '#') continue;
-        line[strcspn(line, "\r\n")] = 0;
-
-        char addr_str[32];
-        char cb_name[64];
-        char args[384] = {0};
-
-        int n = sscanf(line, "%31s %63s %383[^\n]", addr_str, cb_name, args);
-        if (n < 2) {
-            fprintf(stderr, "Invalid line in rules file: '%s'\n", line);
-            continue;
-        }
-
-        cb_func_t cb = lookup_callback(cb_name);
-        if (!cb) {
-            fprintf(stderr, "Error: Callback '%s' not found in registry (line: '%s')\n", cb_name, line);
-            continue;
-        }
-
-        if (rules_count >= MAX_RULES) {
-            fprintf(stderr, "Max rules limit reached (%d), skipping rest\n", MAX_RULES);
-            break;
-        }
-
-        rules[rules_count].address = strtoull(addr_str, NULL, 0);
-        rules[rules_count].func = cb;
-
-        if (n == 3) {
-            // strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args) - 1);
-            strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args));
-            rules[rules_count].args[sizeof(rules[rules_count].args) - 1] = '\0';
-        } else {
-            rules[rules_count].args[0] = '\0';
-        }
-
-        rules_count++;
-    }
-
-    fclose(f);
-}
-
-// ---------------------------------------------------------------
-// vi impl globals & helpers
-// ---------------------------------------------------------------
-// basic blocks
-#define MAX_BASIC_BLOCKS 1024
-unsigned long bb_starts[MAX_BASIC_BLOCKS];
-int bb_count = 0;
-void parse_basic_block_file(const char *filename);
-void parse_basic_block_file(const char *filename) {
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        perror("Error opening basic block file");
-        return;
-    }
-    // format: 0x..., separated by newlines
-    char line[64];                 // plenty for one address + newline
-    while (fgets(line, sizeof(line), fp)) {
-        errno = 0;
-        char *end;
-        uint64_t addr = strtoull(line, &end, 0);  // base 0 ⇒ handles “0x…”
-        if (errno || end == line) {               // conversion failed
-            fprintf(stderr, "Invalid address: %s", line);
-            continue;
-        }
-
-        if (bb_count < MAX_BASIC_BLOCKS) {
-            bb_starts[bb_count++] = addr;
-        } else {
-            fprintf(stderr, "Max basic blocks limit reached (%d), skipping rest\n", MAX_BASIC_BLOCKS);
-            break;
-        }
-    }
-    fclose(fp);
-
-    for (int i = 0; i < bb_count; i++) {
-        printf("Basic Block %d starts at: 0x%lx\n", i, bb_starts[i]);
-    }
-}
-
-// function start
-unsigned long func_start;
-void parse_function_start_file(const char *filename);
-void parse_function_start_file(const char *filename) {
-    // a single line file with function start address in hex
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        perror("Error opening function start file");
-        return;
-    }
-
-    char line[64];
-    if (fgets(line, sizeof(line), fp)) {
-        errno = 0;
-        char *end;
-        func_start = strtoull(line, &end, 0);
-        if (errno || end == line) {
-            fprintf(stderr, "Invalid function start address: %s", line);
-        }
-    }
-    fclose(fp);
-    printf("Function start address parsed: 0x%lx\n", func_start);
-}
-
-// function end
-#define MAX_FUNCTION_ENDS 100
-unsigned long func_ends[MAX_FUNCTION_ENDS];
-int func_end_count = 0;
-void parse_function_end_file(const char *filename);
-void parse_function_end_file(const char *filename) {
-    // same format as basic block file
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        perror("Error opening function end file");
-        return;
-    }
-    char line[64];                 // plenty for one address + newline
-    while (fgets(line, sizeof(line), fp)) {
-        errno = 0;
-        char *end;
-        unsigned long addr = strtoull(line, &end, 0);
-        if (errno || end == line) {
-            fprintf(stderr, "Invalid function end address: %s", line);
-            continue;
-        }
-
-        if (func_end_count < MAX_FUNCTION_ENDS) {
-            func_ends[func_end_count++] = addr;
-        } else {
-            fprintf(stderr, "Max function ends limit reached (%d), skipping rest\n", MAX_FUNCTION_ENDS);
-            break;
-        }
-    }
-    fclose(fp);
-
-    for (int i = 0; i < func_end_count; i++) {
-        printf("Function End %d at: 0x%lx\n", i, func_ends[i]);
-    }
-}
-
-bool function_reached = false;
+#include "path_logger.h"
 
 // ---------------------------------------------------------------
 // helpers
@@ -657,6 +230,459 @@ uint64_t qemu_get_register_64(int reg)
     return_data = (((uint64_t) (reg_value->data[offset + 6])) << 48) | return_data;
     return_data = (((uint64_t) (reg_value->data[offset + 7])) << 56) | return_data;
     return return_data;
+}
+
+// ---------------------------------------------------------------
+// vi impl globals & helpers
+// ---------------------------------------------------------------
+// basic blocks
+#define MAX_BASIC_BLOCKS 1024
+unsigned long bb_starts[MAX_BASIC_BLOCKS];
+int bb_count = 0;
+void parse_basic_block_file(const char *filename);
+void parse_basic_block_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening basic block file");
+        return;
+    }
+    // format: 0x..., separated by newlines
+    char line[64];                 // plenty for one address + newline
+    while (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        uint64_t addr = strtoull(line, &end, 0);  // base 0 ⇒ handles “0x…”
+        if (errno || end == line) {               // conversion failed
+            fprintf(stderr, "Invalid address: %s", line);
+            continue;
+        }
+
+        if (bb_count < MAX_BASIC_BLOCKS) {
+            bb_starts[bb_count++] = addr;
+        } else {
+            fprintf(stderr, "Max basic blocks limit reached (%d), skipping rest\n", MAX_BASIC_BLOCKS);
+            break;
+        }
+    }
+    fclose(fp);
+
+    for (int i = 0; i < bb_count; i++) {
+        printf("Basic Block %d starts at: 0x%lx\n", i, bb_starts[i]);
+    }
+}
+
+// function start
+unsigned long func_start;
+void parse_function_start_file(const char *filename);
+void parse_function_start_file(const char *filename) {
+    // a single line file with function start address in hex
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening function start file");
+        return;
+    }
+
+    char line[64];
+    if (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        func_start = strtoull(line, &end, 0);
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid function start address: %s", line);
+        }
+    }
+    fclose(fp);
+    printf("Function start address parsed: 0x%lx\n", func_start);
+}
+
+// function end
+#define MAX_FUNCTION_ENDS 100
+unsigned long func_ends[MAX_FUNCTION_ENDS];
+int func_end_count = 0;
+void parse_function_end_file(const char *filename);
+void parse_function_end_file(const char *filename) {
+    // same format as basic block file
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening function end file");
+        return;
+    }
+    char line[64];                 // plenty for one address + newline
+    while (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        unsigned long addr = strtoull(line, &end, 0);
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid function end address: %s", line);
+            continue;
+        }
+
+        if (func_end_count < MAX_FUNCTION_ENDS) {
+            func_ends[func_end_count++] = addr;
+        } else {
+            fprintf(stderr, "Max function ends limit reached (%d), skipping rest\n", MAX_FUNCTION_ENDS);
+            break;
+        }
+    }
+    fclose(fp);
+
+    for (int i = 0; i < func_end_count; i++) {
+        printf("Function End %d at: 0x%lx\n", i, func_ends[i]);
+    }
+}
+
+// ---------------------------------------------------------------
+// global structs
+// ---------------------------------------------------------------
+#define MAX_RULES 256
+
+typedef void (*cb_func_t)(unsigned int cpu_index, void *userdata);
+
+typedef struct {
+    const char *name;
+    cb_func_t func;
+} cb_entry_t;
+
+typedef struct {
+    unsigned long long address;
+    cb_func_t func;        // function pointer, NOT the name
+    char args[384];
+} rule_t;
+
+rule_t rules[MAX_RULES];
+size_t rules_count = 0;
+
+bool find_rule_by_address(unsigned long long addr, rule_t **out_rule);
+bool find_rule_by_address(unsigned long long addr, rule_t **out_rule) {
+    for (size_t i = 0; i < rules_count; i++) {
+        if (rules[i].address == addr) {
+            if (out_rule) {
+                *out_rule = &rules[i];
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------
+// virtual instructions
+// ---------------------------------------------------------------
+bool function_reached = false;
+
+// static void raiseirq(unsigned int cpu_index, void *udata);
+// static void updatepc(unsigned int cpu_index, void *udata);
+// static void updatereg(unsigned int cpu_index, void *udata);
+// static void updatemem(unsigned int cpu_index, void *udata);
+// static void randstate(unsigned int cpu_index, void *udata);
+static void logpc(unsigned int cpu_index, void *udata);
+static void resetpc(unsigned int cpu_index, void *udata);
+static void randargs(unsigned int cpu_index, void *udata);
+static void logrets(unsigned int cpu_index, void *udata);
+static void clearpathlogs(unsigned int cpu_index, void *udata);
+static void logbbstart(unsigned int cpu_index, void *udata);
+// static void dumplogger(unsigned int cpu_index, void *udata);
+// static void dyninst(unsigned int cpu_index, void *udata);
+// static void dyninst_lib(unsigned int cpu_index, void *udata);
+
+// ----- updatemem -----
+// #define MAX_BUFFER_SIZE 256
+
+// typedef struct {
+//     uint32_t address;
+//     char mode; // 'r' or 'w'
+//     uint32_t length;
+//     uint8_t buffer[MAX_BUFFER_SIZE];
+// } MemAccess;
+
+
+// int parse_update_mem_arg(const char *input, MemAccess *out);
+// int parse_update_mem_arg(const char *input, MemAccess *out) {
+//     if (!input || !out) return -1;
+
+//     // Temporary copy of input string for tokenizing
+// 	char *temp = malloc(strlen(input) + 1);
+// 	if (!temp) return -1;
+// 	strcpy(temp, input);
+
+
+//     char *token = strtok(temp, ":");
+//     if (!token) { free(temp); return -1;}
+//     out->address = strtoul(token, NULL, 0); // parse address
+
+//     token = strtok(NULL, ":");
+//     if (!token || (token[0] != 'r' && token[0] != 'w')) return -1;
+//     out->mode = token[0]; // parse mode
+
+//     token = strtok(NULL, ":");
+//     if (!token) { free(temp); return -1;}
+//     out->length = strtoul(token, NULL, 0); // parse length
+//     if (out->length > MAX_BUFFER_SIZE) return -1;
+
+//     token = strtok(NULL, ":");
+//     if (!token) { free(temp); return -1;}
+
+//     // Now parse comma-separated bytes
+//     uint32_t i = 0;
+//     char *byte_str = strtok(token, ",");
+//     while (byte_str && i < out->length) {
+//         out->buffer[i++] = (uint8_t)strtoul(byte_str, NULL, 0);
+//         byte_str = strtok(NULL, ",");
+//     }
+
+//     if (i != out->length) { printf("Invalid Argument \n"); free(temp); return -1;}
+
+// 	free(temp);
+//     return 0; // success
+// }
+
+// static void updatemem(unsigned int cpu_index, void *udata) {
+// 	const char *input = (const char *) udata;
+// 	MemAccess mem;
+
+//     if (parse_update_mem_arg(input, &mem) == 0) {
+// 		if (mem.mode == 'r') {
+// 			qemu_plugin_read_memory(mem.address, mem.buffer, mem.length);
+// 		} else {
+// 			qemu_plugin_write_memory(mem.address, mem.buffer, mem.length);
+// 		}
+// 	}
+// }
+
+
+// ----- dyninst, dyninst_lib -----
+// #define MAX_FILENAME_LEN 256
+
+// typedef struct {
+//     uint64_t addr;
+//     char filename[MAX_FILENAME_LEN];  // Fixed-size buffer
+// } AddrFilePair;
+
+// static void dyninst_lib(unsigned int cpu_index, void *udata) {
+// 	qemu_plugin_load_elf((char *) udata);
+// }
+
+
+// AddrFilePair parse_addr_file(const char *input);
+// AddrFilePair parse_addr_file(const char *input) {
+//     AddrFilePair result = {0, {0}};
+
+//     const char *colon = strchr(input, ':');
+//     if (!colon) {
+//         fprintf(stderr, "Invalid format: no ':' found.\n");
+//         return result;
+//     }
+
+//     // Parse address part
+//     char addr_str[32] = {0}; // Enough for 64-bit address string
+//     size_t addr_len = colon - input;
+
+//     if (addr_len >= sizeof(addr_str)) {
+//         fprintf(stderr, "Address string too long.\n");
+//         return result;
+//     }
+
+//     strncpy(addr_str, input, addr_len);
+//     addr_str[addr_len] = '\0';
+
+//     result.addr = strtoull(addr_str, NULL, 0); // auto-detect 0x
+
+//     // Copy filename part into fixed buffer
+//     const char *filename = colon + 1;
+
+//     if (strlen(filename) >= MAX_FILENAME_LEN) {
+//         fprintf(stderr, "Filename too long. Truncated.\n");
+//         strncpy(result.filename, filename, MAX_FILENAME_LEN - 1);
+//         result.filename[MAX_FILENAME_LEN - 1] = '\0'; // Null-terminate
+//     } else {
+//         strcpy(result.filename, filename);
+//     }
+
+//     return result;
+// }
+
+// // Reads entire file into a buffer.
+// // Returns pointer to buffer and sets *length to file size.
+// // Returns NULL on error.
+// void* read_file(const char *filename, size_t *length);
+// void* read_file(const char *filename, size_t *length) {
+//     FILE *file = fopen(filename, "rb");
+//     if (!file) {
+//         perror("Error opening file");
+//         return NULL;
+//     }
+
+//     // Seek to end to find file size
+//     if (fseek(file, 0, SEEK_END) != 0) {
+//         perror("Error seeking file");
+//         fclose(file);
+//         return NULL;
+//     }
+
+//     long file_size = ftell(file);
+//     if (file_size < 0) {
+//         perror("Error telling file position");
+//         fclose(file);
+//         return NULL;
+//     }
+//     rewind(file); // Go back to start
+
+//     // Allocate buffer
+//     void *buffer = malloc(file_size);
+//     if (!buffer) {
+//         perror("Memory allocation failed");
+//         fclose(file);
+//         return NULL;
+//     }
+
+//     // Read entire file into buffer
+//     size_t read_size = fread(buffer, 1, file_size, file);
+//     if (read_size != file_size) {
+//         perror("Error reading file");
+//         free(buffer);
+//         fclose(file);
+//         return NULL;
+//     }
+
+//     fclose(file);
+//     *length = file_size; // Return size
+//     return buffer;
+// }
+
+// void dyninst(unsigned int cpu_index, void *udata) {
+// 	AddrFilePair parsed = parse_addr_file((char *)udata);
+	
+// 	size_t file_len = 0;
+// 	void *file_buf = read_file(parsed.filename, &file_len);
+// 	if (file_buf) {
+// 		qemu_plugin_write_memory(parsed.addr, file_buf, file_len);
+// 		free(file_buf);
+// 	}
+// }
+
+// ----- raiseirq, updatepc, updatereg -----
+// static void raiseirq(unsigned int cpu_index, void *udata){
+// 	qemu_plugin_raise_irq(15);
+// }
+
+// static void updatepc(unsigned int cpu_index, void *udata)
+// {
+// 	// BUGON: This wont' work anymore
+// 	uint32_t val = 0xdeadbeef;
+// 	val = (0x106cc | 1);
+// 	qemu_plugin_set_register((uint8_t *)&val, 15);
+// }
+
+// static void updatereg(unsigned int cpu_index, void *udata)
+// {
+//     ValueUnion vn;
+//     vn.f = 6.28;
+//     qemu_plugin_set_register((uint8_t *)&vn, 26); //  26 is s0
+// }
+
+// ----- logpc, resetpc -----
+static void logpc(unsigned int cpu_index, void *udata)
+{
+    // if (function_reached) {
+        uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not the true pc sometime
+        printf("[VI logpc] Current PC: 0x%08x\n", pc);
+    // }
+}
+static void resetpc(unsigned int cpu_index, void *udata)
+{
+    if (function_reached) {
+        // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+        // printf("[VI resetpc] Current PC: 0x%08x\n", pc); // this is not the true pc sometime
+        if (!is_logging_valid) {
+            // reset to func_start
+            uint32_t pc = (uint32_t) func_start;
+            qemu_plugin_set_register((uint8_t *)&pc, ARM_V7M_REG_R15);
+            printf("[VI resetpc] PC reset to function start: 0x%08x\n", pc);
+            // qemu_plugin_vcpu_request_exit();
+        }
+    }
+}
+
+// ---------------------------------------------------------------
+// cb_registry
+// ---------------------------------------------------------------
+
+cb_entry_t cb_registry[] = {
+    // { "updatepc", updatepc },
+	// { "updatereg", updatereg},
+	// { "updatemem", updatemem},
+	// { "randstate", randstate},
+    { "logpc", logpc},
+    { "resetpc", resetpc},
+    { "randargs", randargs },
+    { "logrets", logrets},
+    { "clearpathlogs", clearpathlogs},
+    { "logbbstart", logbbstart},
+    // { "raiseirq", raiseirq },
+	// { "dumplog", dumplogger},
+	// { "dyninst", dyninst},
+	// { "dyninst_lib", dyninst_lib},
+};
+
+const size_t cb_registry_len = sizeof(cb_registry) / sizeof(cb_registry[0]);
+
+static cb_func_t lookup_callback(const char *name) {
+    for (size_t i = 0; i < cb_registry_len; i++) {
+        if (strcmp(cb_registry[i].name, name) == 0)
+            return cb_registry[i].func;
+    }
+    return NULL;
+}
+
+void parse_rules_file(const char *filename);
+void parse_rules_file(const char *filename) {
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        perror("Failed to open rules file");
+        return;
+    }
+
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '\n' || line[0] == '#') continue;
+        line[strcspn(line, "\r\n")] = 0;
+
+        char addr_str[32];
+        char cb_name[64];
+        char args[384] = {0};
+
+        int n = sscanf(line, "%31s %63s %383[^\n]", addr_str, cb_name, args);
+        if (n < 2) {
+            fprintf(stderr, "Invalid line in rules file: '%s'\n", line);
+            continue;
+        }
+
+        cb_func_t cb = lookup_callback(cb_name);
+        if (!cb) {
+            fprintf(stderr, "Error: Callback '%s' not found in registry (line: '%s')\n", cb_name, line);
+            continue;
+        }
+
+        if (rules_count >= MAX_RULES) {
+            fprintf(stderr, "Max rules limit reached (%d), skipping rest\n", MAX_RULES);
+            break;
+        }
+
+        rules[rules_count].address = strtoull(addr_str, NULL, 0);
+        rules[rules_count].func = cb;
+
+        if (n == 3) {
+            // strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args) - 1);
+            strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args));
+            rules[rules_count].args[sizeof(rules[rules_count].args) - 1] = '\0';
+        } else {
+            rules[rules_count].args[0] = '\0';
+        }
+
+        rules_count++;
+    }
+
+    fclose(f);
 }
 
 #endif // VIRTUAL_H

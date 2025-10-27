@@ -1037,4 +1037,8 @@ void qemu_plugin_u64_set(qemu_plugin_u64 entry, unsigned int vcpu_index,
 QEMU_PLUGIN_API
 uint64_t qemu_plugin_u64_sum(qemu_plugin_u64 entry);
 
+// zz: for resetting pc to function start
+QEMU_PLUGIN_API
+void qemu_plugin_vcpu_exit_tb_now(void);
+
 #endif /* QEMU_QEMU_PLUGIN_H */

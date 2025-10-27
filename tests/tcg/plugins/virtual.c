@@ -43,7 +43,7 @@ double default_double_range[2] = {0.5, 5.0};
 //     void (*write)(void *opaque, hwaddr offset, uint64_t value, unsigned size);
 // } DEV_XPORTER;
 
-static const char * runtime;
+// static const char * runtime;
 
 // --------------------------------------------------------------------------------------
 // randargs
@@ -174,6 +174,10 @@ double get_random_double(double min, double max) {
 static int cur_iteration = 0;
 #define MAX_FUZZ_ITERATIONS 10000000
 static void randargs(unsigned int cpu_index, void *udata) {
+    // print pc for debugging
+    uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+    printf("[VI randargs] Current PC: 0x%08x\n", pc);
+
     function_reached = true;
 
     // printf("randargs - results for iteration %d:\n", cur_iteration);
@@ -468,7 +472,7 @@ static void clearpathlogs(unsigned int cpu_index, void *udata) {
 
 static void logbbstart(unsigned int cpu_index, void *udata) {
     // get pc vlue
-    uint32_t pc = qemu_get_register_32(15); // Assuming 15 is the
+    uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
     current_path[current_path_len++] = (uint64_t)pc;
 }
 
@@ -481,8 +485,11 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
     unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
     unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
     int is_store = qemu_plugin_mem_is_store(info);
-    fprintf(stdout, "[MEMCB update_addr_var_mem_cb] %u-byte @ 0x%08" PRIx64 " %s\n",
-            sz_bytes, vaddr, is_store ? "STORE" : "LOAD");
+
+    // check pc
+    // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+    fprintf(stdout, "[MEMCB update_addr_var_mem_cb] @ 0x%08" PRIx64 " (%u-byte %s), pc=0x%08x\n",
+            vaddr, sz_bytes, is_store ? "STORE" : "LOAD", qemu_get_register_32(ARM_V7M_REG_R15)); // warn: this could still be the start of tb
     // TODO: handle non-fp memory variables
     // check whether the address is in arg_settings
     // Iterate through arg_settings to find a match
@@ -551,11 +558,19 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                 exit(EXIT_FAILURE);
             }
 
+            printf("[MEMCB update_addr_var_mem_cb] logging invalidated: created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
             is_logging_valid = false;
-            printf("[MEMCB update_addr_var_mem_cb] Created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+            qemu_plugin_vcpu_exit_tb_now();
+            // // set pc back to function start
+            // ValueUnion func_start_pc;
+            // func_start_pc.u32 = func_start;
+            // qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+            // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+            // printf("[MEMCB update_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+            // return;
         }
         // ArgSetting *new_setting = &arg_settings[arg_count++];
-        printf("[MEMCB update_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
+        // printf("[MEMCB update_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
     }
 }
 
@@ -566,8 +581,10 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
     unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
     int is_store = qemu_plugin_mem_is_store(info);
-    fprintf(stdout, "[MEMCB update_float_addr_var_mem_cb] %u-bit @ 0x%08" PRIx64 " %s\n",
-            8u << sz_shift, vaddr, is_store ? "STORE" : "LOAD");
+    // check pc
+    // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+    fprintf(stdout, "[MEMCB update_float_addr_var_mem_cb] @ 0x%08" PRIx64 " (%u-bit %s), pc=0x%08x\n",
+            vaddr, 8u << sz_shift, is_store ? "STORE" : "LOAD", qemu_get_register_32(ARM_V7M_REG_R15));
     /* optional: value seen */
     // qemu_plugin_mem_value val = qemu_plugin_mem_get_value(info);
 
@@ -609,7 +626,16 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 // // update current logged_in_values
                 // logged_in_values[i].f = value.f;
                 // printf("[update_float_addr_var_mem_cb] updated logged_in_values[%zu] to %g\n", i, logged_in_values[i].f);
+                printf("[MEMCB update_float_addr_var_mem_cb] logging invalidated: updated arg setting '%s' for address 0x%lx to float type\n", setting->name, vaddr);
                 is_logging_valid = false; // invalidate current logging
+                qemu_plugin_vcpu_exit_tb_now();
+                // // set pc back to function start
+                // ValueUnion func_start_pc;
+                // func_start_pc.u32 = func_start;
+                // qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+                // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+                // printf("[MEMCB update_float_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+                // return;
             }
             if (setting->vtype != TYPE_DOUBLE && setting->sz == 8) {
                 // update to double
@@ -619,7 +645,17 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 setting->value_count = 2; // single value
                 setting->value_range[0].d = default_double_range[0];
                 setting->value_range[1].d = default_double_range[1];
+
+                printf("[MEMCB update_float_addr_var_mem_cb] logging invalidated: updated arg setting '%s' for address 0x%lx to double type\n", setting->name, vaddr);
                 is_logging_valid = false; // invalidate current logging
+                qemu_plugin_vcpu_exit_tb_now();
+                // // set pc back to function start
+                // ValueUnion func_start_pc;
+                // func_start_pc.u32 = func_start;
+                // qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+                // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+                // printf("[MEMCB update_float_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+                // return;
             }
         }
     }
@@ -672,8 +708,16 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 new_setting->value_range[1].d = default_double_range[1];
             }
 
+            printf("[MEMCB update_float_addr_var_mem_cb] logging invalidated: created new float arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
             is_logging_valid = false;
-            printf("[MEMCB update_float_addr_var_mem_cb] New float arg setting '%s' for address 0x%lx creation done.\n", new_setting->name, vaddr);
+            qemu_plugin_vcpu_exit_tb_now();
+            // // set pc back to function start
+            // ValueUnion func_start_pc;
+            // func_start_pc.u32 = func_start;
+            // qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+            // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+            // printf("[MEMCB update_float_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+            // return;
         }
         // ArgSetting *new_setting = &arg_settings[arg_count++];
         // printf("[MEMCB update_float_addr_var_mem_cb] New float setting creation for address 0x%lx done\n", vaddr);
@@ -681,17 +725,17 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     // }
 }
 
-int inline_ins = 0;
+// int inline_ins = 0;
 #define MAX_MATCHES 10
 
 
-static int init = 0;
+// static int init = 0;
 static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 {
-	if (runtime && !init) {
-			qemu_plugin_load_elf((char *)runtime);
-			init = 1;
-	}
+	// if (runtime && !init) {
+	// 		qemu_plugin_load_elf((char *)runtime);
+	// 		init = 1;
+	// }
     size_t n = qemu_plugin_tb_n_insns(tb);
     size_t i;
 	UpdateEntry *matches[MAX_MATCHES];
@@ -785,7 +829,10 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
     	// }
 		// }
 
-		//Middle prioirity is Virtual instructions 
+        // install logpc vi for all instructions
+        // qemu_plugin_register_vcpu_insn_exec_cb(insn, logpc, QEMU_PLUGIN_CB_RW_REGS, NULL); // zz: this may not show the exact pc changes, pc may keep for few instructions
+
+		//Middle prioirity is Virtual instructions (randargs, logrets)
 		rule_t  *rule;
         if (find_rule_by_address(qemu_plugin_insn_vaddr(insn), &rule)) {
                 qemu_plugin_register_vcpu_insn_exec_cb(
@@ -799,6 +846,10 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
                     insn, logbbstart, QEMU_PLUGIN_CB_RW_REGS, NULL);
             }
         }
+
+        // install resetpc vi for all instructions
+        // qemu_plugin_register_vcpu_insn_exec_cb(insn, resetpc, QEMU_PLUGIN_CB_RW_REGS, NULL); // zz: this not work, use qemu_plugin_vcpu_exit_tb_now
+
 
         // [zz] moemory callbacks after VI for:
         //      (1) dynamic struct field identification
@@ -820,15 +871,17 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
         if (cs_disasm_count > 0) {
             // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
-            printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+            // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
             if (arm_insn_is_fp_mem_access(csinsn)) {
-                printf("    [INSTALL mem] float instruction accesses floating point memory\n");
+                printf("    [INSTALL mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
                 qemu_plugin_register_vcpu_mem_cb(insn, update_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, NULL);
+                printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
             }
             // check if the instructino access memory
             else if (arm_insn_accesses_mem(csinsn)) {
-                printf("    [INSTALL mem] instruction accesses memory\n");
+                printf("    [INSTALL mem] instruction @0x%08lx accesses memory\n", csinsn[0].address);
                 qemu_plugin_register_vcpu_mem_cb(insn, update_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, NULL);
+                printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
             }
 
 
@@ -949,7 +1002,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 	// load_logger_config(filename);
 
 	filename = get_arg("monitor", argc, argv);
-	runtime = filename; // Lazy Init
+	// runtime = filename; // Lazy Init
 
     const char* pass_in_dump_path = get_arg("dump_path", argc, argv);
     if (pass_in_dump_path) {
