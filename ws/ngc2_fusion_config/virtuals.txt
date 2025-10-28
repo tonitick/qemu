@@ -1,0 +1,2 @@
+0x8109bf0 randargs
+0x8109cec logrets

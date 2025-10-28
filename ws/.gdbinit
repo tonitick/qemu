@@ -55,5 +55,6 @@ c
 # p/f $r0
 
 delete breakpoints
-set $pc=0x8101e84
+# set $pc=0x8101e84
+set $pc=0x08109bf0
 c

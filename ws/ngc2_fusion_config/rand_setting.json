@@ -1,0 +1,38 @@
+{
+    "arg1": {
+        "reg": "r0",
+        "type": "uint32",
+        "is_pointer": "unknown",
+        "size": 4
+    },
+    "arg2": {
+        "reg": "r1",
+        "type": "float",
+        "is_pointer": "false",
+        "size": 4,
+        "value_range": [
+            0.1,
+            5.0
+        ]
+    },
+    "arg3": {
+        "reg": "r2",
+        "type": "float",
+        "is_pointer": "false",
+        "size": 4,
+        "value_range": [
+            0.1,
+            5.0
+        ]
+    },
+    "arg4": {
+        "reg": "r3",
+        "type": "float",
+        "is_pointer": "false",
+        "size": 4,
+        "value_range": [
+            0.1,
+            5.0
+        ]
+    }
+}
