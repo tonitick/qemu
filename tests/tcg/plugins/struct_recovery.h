@@ -3,6 +3,9 @@
 
 #include "json_parse.h"
 
+// ===============================================================================================================================
+// Heap vars
+// ===============================================================================================================================
 
 #define STRUCT_MEM_SIZE 512
 unsigned long cur_ptr_addr = 0x30000020; // pointer assignment start at 0x20000020
@@ -208,6 +211,38 @@ static inline struct NestedStruct *ns_new_off(size_t offset, size_t size) {
 //     return NULL;
 // }
 
+// ===============================================================================================================================
+// Stack vars
+// ===============================================================================================================================
+#define MAX_STACK_OFF 1024
+unsigned long stack_ptr = 0x20000600;
+typedef struct {
+    unsigned long addr;
+    size_t sz;
+} StackVar;
+StackVar stack_vars_write[MAX_ARGS];
+size_t stack_var_write_count = 0;
+int is_stack_var_write(unsigned long addr, size_t sz);
+int is_stack_var_write(unsigned long addr, size_t sz) {
+    for (size_t i = 0; i < stack_var_write_count; i++) {
+        StackVar *v = &stack_vars_write[i];
+        if (addr == v->addr && sz == v->sz) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
+// [stack_ptr - MAX_STACK_OFF, stack_ptr + MAX_STACK_OFF]
+int within_stack_bounds(uint64_t addr, size_t sz);
+int within_stack_bounds(uint64_t addr, size_t sz) {
+    if (addr + sz < stack_ptr - MAX_STACK_OFF) {
+        return 0;
+    }
+    if (addr > stack_ptr + MAX_STACK_OFF) {
+        return 0;
+    }
+    return 1;
+}
 
 #endif // STRUCT_RECOVERY_H

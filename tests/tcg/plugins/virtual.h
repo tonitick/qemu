@@ -581,11 +581,35 @@ static void logbbstart(unsigned int cpu_index, void *udata);
 // }
 
 // ----- logpc, resetpc -----
+#define MAX_INSTRUCTION_NUM 10000
+unsigned long instr_addrs[MAX_BASIC_BLOCKS];
+int instr_count = 0;
+int is_instr_logged(unsigned long addr);
+int is_instr_logged(unsigned long addr) {
+    for (int i = 0; i < instr_count; i++) {
+        if (instr_addrs[i] == addr) {
+            return 1;
+        }
+    }
+    return 0;
+}
+int get_logged_instr_index(unsigned long addr);
+int get_logged_instr_index(unsigned long addr) {
+    for (int i = 0; i < instr_count; i++) {
+        if (instr_addrs[i] == addr) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static void logpc(unsigned int cpu_index, void *udata)
 {
     // if (function_reached) {
-        uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not the true pc sometime
-        printf("[VI logpc] Current PC: 0x%08x\n", pc);
+        // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not the true pc sometime
+        // uint32_t pc = *(uint32_t *)udata;
+        uint64_t pc = *(uint64_t *)udata;
+        printf("[VI logpc] Current PC: 0x%08lx\n", pc);
     // }
 }
 static void resetpc(unsigned int cpu_index, void *udata)
