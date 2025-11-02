@@ -423,6 +423,68 @@ static void randargs(unsigned int cpu_index, void *udata) {
     }
 }
 
+// set args at func start to trigger specific execution paths
+static void setargs(unsigned int cpu_index, void *udata) {
+    uint64_t pc = *(uint64_t *)udata;
+    printf("[VI setargs] Current PC: 0x%08lx\n", pc);
+
+    // set stack pointer
+    ValueUnion sp_val;
+    sp_val.u32 = stack_ptr;
+    qemu_plugin_set_register((uint8_t *)&sp_val, ARM_V7M_REG_R13);
+
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *setting = &arg_settings[i];
+        // use range to generate random value
+        ValueUnion value = setting->concrete_value;
+        // set value to corresponding location
+        if (setting->location_type == TYPE_REG) {
+            if (setting->vtype == TYPE_FLOAT) {
+                printf("[VI setargs] setting register %s to value: %g\n", setting->reg, value.f);
+            } else if (setting->vtype == TYPE_DOUBLE) {
+                printf("[VI setargs] setting register %s to value: %g\n", setting->reg, value.d);
+            } else if (setting->vtype == TYPE_UINT32) {
+                printf("[VI setargs] setting register %s to value: %u\n", setting->reg, value.u32);
+            }
+            else {
+                fprintf(stderr, "[VI setargs] Unsupported value type for register in setting '%s'\n", setting->name);
+                exit(EXIT_FAILURE);
+            }
+            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg)); // TODO: check with arslan, looks like it write 8 bytes for all float regs?
+        } else if (setting->location_type == TYPE_ADDR) {
+            if (setting->vtype == TYPE_FLOAT) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+                printf("[VI setargs] writing float value %g to memory address: 0x%lx\n", value.f, setting->addr);
+            } else if (setting->vtype == TYPE_DOUBLE) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 8);
+                printf("[VI setargs] writing double value %g to memory address: 0x%lx\n", value.d, setting->addr);
+            } else if (setting->vtype == TYPE_UINT32) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+                printf("[VI setargs] writing uint32 value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+            }
+            else if (setting->vtype == TYPE_UINT16) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 2);
+                printf("[VI setargs] writing uint16 value %u to memory address: 0x%lx\n", (uint16_t)(value.u32 & 0xFFFF), setting->addr);
+            }
+            else if (setting->vtype == TYPE_UINT8) {
+                qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 1);
+                printf("[VI setargs] writing uint8 value %u to memory address: 0x%lx\n", (uint8_t)(value.u32 & 0xFF), setting->addr);
+            }
+            else {
+                fprintf(stderr, "[VI setargs] Unsupported value type for memory in setting '%s'\n", setting->name);
+                exit(EXIT_FAILURE);
+            }
+            // qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+        } else {
+            fprintf(stderr, "[VI setargs] Unsupported location type in setting '%s'\n", setting->name);
+            exit(EXIT_FAILURE);
+        }
+
+        // log values
+        // logged_in_values[i] = value;
+        setting->concrete_value = value; // use a field in ArgSetting to store concrete input value instead
+    }
+}
 
 // --------------------------------------------------------------------------------------
 // logrets
@@ -469,6 +531,49 @@ static void logrets(unsigned int cpu_index, void *udata) {
         // logged_out_values[i] = value;
         setting->concrete_value = value; // use a field in RetSetting to store concrete output value instead
     }
+}
+
+static void logrets_sub_semantics(unsigned int cpu_index, void *udata) {
+    // This function is called when the magic instruction is executed
+    // It will dump the latest return values to the log buffer
+    printf("[VI logrets_sub_semantics] logrets_sub_semantics called, dumping latest return values.\n");
+    for (size_t i = 0; i < ret_count; i++) {
+        RetSetting *setting = &ret_settings[i];
+        ValueUnion value;
+        if (setting->location_type == TYPE_REG) {
+            // Log register value
+            // value.u32 = qemu_get_register(get_reg_by_name(setting->reg));
+            if (setting->vtype == TYPE_FLOAT) {
+                value.u32 = qemu_get_register_32(get_reg_by_name(setting->reg)); // just copy the bytes
+                printf("[VI logrets_sub_semantics] float register %s: %g\n", setting->reg, value.f);
+            } else if (setting->vtype == TYPE_UINT32) {
+                value.u32 = qemu_get_register_32(get_reg_by_name(setting->reg));
+                printf("[VI logrets_sub_semantics] uint32 register %s: %u\n", setting->reg, value.u32);
+            } else if (setting->vtype == TYPE_DOUBLE) {
+                value.u64 = qemu_get_register_64(get_reg_by_name(setting->reg)); // just copy the bytes
+                printf("[VI logrets_sub_semantics] double register %s: %g\n", setting->reg, value.d);
+            } else {
+                fprintf(stderr, "[VI logrets_sub_semantics] Unsupported value type for register in setting '%s'\n", setting->name);
+                exit(EXIT_FAILURE);
+            }
+        } else if (setting->location_type == TYPE_ADDR) {
+            // Log memory value
+            qemu_plugin_read_memory(setting->addr, (uint8_t *)&value, 4);
+            if (setting->vtype == TYPE_FLOAT) {
+                printf("[VI logrets_sub_semantics] memory address 0x%lx: %g\n", setting->addr, value.f);
+            } else {
+                printf("[VI logrets_sub_semantics] memory address 0x%lx: %u\n", setting->addr, value.u32);
+            }
+        } else {
+            fprintf(stderr, "[VI logrets_sub_semantics] Unsupported location type in setting '%s'\n", setting->name);
+            exit(EXIT_FAILURE);
+        }
+
+        // log out values
+        // logged_out_values[i] = value;
+        setting->concrete_value = value; // use a field in RetSetting to store concrete output value instead
+    }
+    exit(0); // exit after logging for sub-semantics
 }
 
 // --------------------------------------------------------------------------------------
@@ -894,41 +999,43 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         // [zz] moemory callbacks after VI for:
         //      (1) dynamic struct field identification
         //      (2) dynamic variable type identification (float vs int)
-        size_t inst_len = qemu_plugin_insn_size(insn);
-        GByteArray *inst_bytes = g_byte_array_sized_new(inst_len);
-        g_byte_array_set_size(inst_bytes, inst_len);
-        size_t copied = qemu_plugin_insn_data(insn, inst_bytes->data, inst_len);
-        uint64_t insn_addr = qemu_plugin_insn_vaddr(insn);
+        if (!is_sub_semantics_mode) {
+            size_t inst_len = qemu_plugin_insn_size(insn);
+            GByteArray *inst_bytes = g_byte_array_sized_new(inst_len);
+            g_byte_array_set_size(inst_bytes, inst_len);
+            size_t copied = qemu_plugin_insn_data(insn, inst_bytes->data, inst_len);
+            uint64_t insn_addr = qemu_plugin_insn_vaddr(insn);
 
-        printf("[INSTALL instr] 0x%08lx: ", (unsigned long)insn_addr);
-        for (size_t b = 0; b < copied; b++) {
-            printf("%02x ", inst_bytes->data[b]);
-        }
-        printf("\n");
-        // capstone disassembly
-        cs_option(cshandle, CS_OPT_DETAIL, CS_OPT_ON);
-        cs_disasm_count = cs_disasm(
-            cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
-        if (cs_disasm_count > 0) {
-            // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
-            // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
-            if (arm_insn_is_fp_mem_access(csinsn)) {
-                printf("    [INSTALL mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
-                qemu_plugin_register_vcpu_mem_cb(insn, update_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
-                printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+            printf("[INSTALL instr] 0x%08lx: ", (unsigned long)insn_addr);
+            for (size_t b = 0; b < copied; b++) {
+                printf("%02x ", inst_bytes->data[b]);
             }
-            // check if the instructino access memory
-            else if (arm_insn_accesses_mem(csinsn)) {
-                printf("    [INSTALL mem] instruction @0x%08lx accesses memory\n", csinsn[0].address);
-                qemu_plugin_register_vcpu_mem_cb(insn, update_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
-                printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+            printf("\n");
+            // capstone disassembly
+            cs_option(cshandle, CS_OPT_DETAIL, CS_OPT_ON);
+            cs_disasm_count = cs_disasm(
+                cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
+            if (cs_disasm_count > 0) {
+                // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
+                // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                if (arm_insn_is_fp_mem_access(csinsn)) {
+                    printf("    [INSTALL mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
+                    qemu_plugin_register_vcpu_mem_cb(insn, update_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
+                    printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                }
+                // check if the instructino access memory
+                else if (arm_insn_accesses_mem(csinsn)) {
+                    printf("    [INSTALL mem] instruction @0x%08lx accesses memory\n", csinsn[0].address);
+                    qemu_plugin_register_vcpu_mem_cb(insn, update_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
+                    printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                }
+
+
+            } else {
+                printf("[INSTALL disas] <disas error>\n");
             }
-
-
-        } else {
-            printf("[INSTALL disas] <disas error>\n");
+            g_byte_array_free(inst_bytes, TRUE);
         }
-        g_byte_array_free(inst_bytes, TRUE);
 
 		//Second to Highest priority: Modifier (zz: move modifier after vi)
 		//void * handle= qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn,  QEMU_PLUGIN_CB_GEN_LABEL, NULL, 0);
@@ -1050,6 +1157,11 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     }
     printf("Dump path set to: %s\n", dump_path);
 
+    const char* sub_semantics_mode_str = get_arg("sub_semantics_mode", argc, argv);
+    if (sub_semantics_mode_str && strcmp(sub_semantics_mode_str, "1") == 0) {
+        is_sub_semantics_mode = true;
+        printf("Sub-semantics mode enabled\n");
+    }
 
 	// qemu_plugin_unimp_export_device((void *)&importer);
     qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);

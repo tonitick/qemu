@@ -1,0 +1,114 @@
+{
+	"arg1":	{
+		"reg":	"r0",
+		"size":	4,
+		"is_pointer":	"true",
+		"type":	"uint32",
+		"value_range":	[805306400],
+		"concrete_value":	805306400
+	},
+	"arg2":	{
+		"reg":	"r1",
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.10000000149011612, 5],
+		"concrete_value":	2.4320268630981445
+	},
+	"arg3":	{
+		"reg":	"r2",
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.10000000149011612, 5],
+		"concrete_value":	4.3381891250610352
+	},
+	"arg4":	{
+		"reg":	"r3",
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.10000000149011612, 5],
+		"concrete_value":	0.267765074968338
+	},
+	"arg1_off_16":	{
+		"addr":	805306416,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	1.5215390920639038
+	},
+	"arg1_off_20":	{
+		"addr":	805306420,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	4.4088459014892578
+	},
+	"arg1_off_24":	{
+		"addr":	805306424,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	0.883650243282318
+	},
+	"arg1_off_12":	{
+		"addr":	805306412,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	3.9321990013122559
+	},
+	"sp_0":	{
+		"addr":	536872448,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	4.26160430908203
+	},
+	"sp_4":	{
+		"addr":	536872452,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	2.6803452968597412
+	},
+	"sp_8":	{
+		"addr":	536872456,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	4.1550312042236328
+	},
+	"arg1_off_0":	{
+		"addr":	805306400,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	2.2511682510375977
+	},
+	"sp_12":	{
+		"addr":	536872460,
+		"size":	4,
+		"is_pointer":	"false",
+		"type":	"float",
+		"value_range":	[0.5, 5],
+		"concrete_value":	1.7982003688812256
+	},
+	"arg1_off_40":	{
+		"addr":	805306440,
+		"size":	1,
+		"is_pointer":	"false",
+		"type":	"uint8",
+		"value_range":	[0, 2],
+		"concrete_value":	0
+	}
+}

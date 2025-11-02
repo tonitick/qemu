@@ -331,6 +331,12 @@ void parse_function_end_file(const char *filename) {
     }
 }
 
+unsigned long sub_semantic_start;
+unsigned long sub_semantic_end;
+bool is_sub_semantic_collection = false;
+bool is_sub_semantics_mode = false;
+
+
 // ---------------------------------------------------------------
 // global structs
 // ---------------------------------------------------------------
@@ -378,7 +384,9 @@ bool function_reached = false;
 static void logpc(unsigned int cpu_index, void *udata);
 static void resetpc(unsigned int cpu_index, void *udata);
 static void randargs(unsigned int cpu_index, void *udata);
+static void setargs(unsigned int cpu_index, void *udata);
 static void logrets(unsigned int cpu_index, void *udata);
+static void logrets_sub_semantics(unsigned int cpu_index, void *udata);
 static void clearpathlogs(unsigned int cpu_index, void *udata);
 static void logbbstart(unsigned int cpu_index, void *udata);
 // static void dumplogger(unsigned int cpu_index, void *udata);
@@ -639,7 +647,9 @@ cb_entry_t cb_registry[] = {
     { "logpc", logpc},
     { "resetpc", resetpc},
     { "randargs", randargs },
+    { "setargs", setargs},
     { "logrets", logrets},
+    { "logrets_sub_semantics", logrets_sub_semantics},
     { "clearpathlogs", clearpathlogs},
     { "logbbstart", logbbstart},
     // { "raiseirq", raiseirq },

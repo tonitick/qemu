@@ -170,10 +170,14 @@ void parse_arg_settings(const char *json)
                 s->vtype = TYPE_UINT32;
             } else if (strcmp(type->valuestring, "double") == 0) {
                 s->vtype = TYPE_DOUBLE;
+            } else if (strcmp(type->valuestring, "uint16") == 0) {
+                s->vtype = TYPE_UINT16;
+            } else if (strcmp(type->valuestring, "uint8") == 0) {
+                s->vtype = TYPE_UINT8;
             } else {
                 fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
                 cJSON_Delete(root);
-                exit(EXIT_FAILURE);  // exit on unsupported type
+                exit(EXIT_FAILURE);
             }
         }
 
@@ -227,6 +231,10 @@ void parse_arg_settings(const char *json)
                         s->value_range[i].d = num->valuedouble;
                     } else if (s->vtype == TYPE_UINT32) {
                         s->value_range[i].u32 = (uint32_t)num->valueint;  // store as uint32_t
+                    } else if (s->vtype == TYPE_UINT16) {
+                        s->value_range[i].u32 = (uint32_t)num->valueint;
+                    } else if (s->vtype == TYPE_UINT8) {
+                        s->value_range[i].u32 = (uint32_t)num->valueint;
                     } else {
                         fprintf(stderr, "Unsupported type for value_range in '%s'\n", s->name);
                         s->value_count = 0;  // reset count on error
@@ -238,6 +246,24 @@ void parse_arg_settings(const char *json)
                     break;
                 }
 
+            }
+        }
+
+        // concrete_value (optional)
+        cJSON *cv = cJSON_GetObjectItemCaseSensitive(arg, "concrete_value");
+        if (cJSON_IsNumber(cv)) {
+            if (s->vtype == TYPE_FLOAT) {
+                s->concrete_value.f = cv->valuedouble;
+            } else if (s->vtype == TYPE_DOUBLE) {
+                s->concrete_value.d = cv->valuedouble;
+            } else if (s->vtype == TYPE_UINT32) {
+                s->concrete_value.u32 = (uint32_t)cv->valueint;
+            } else if (s->vtype == TYPE_UINT16) {
+                s->concrete_value.u32 = (uint32_t)cv->valueint;
+            } else if (s->vtype == TYPE_UINT8) {
+                s->concrete_value.u32 = (uint32_t)cv->valueint;
+            } else {
+                fprintf(stderr, "Unsupported type for concrete_value in '%s'\n", s->name);
             }
         }
     }
@@ -520,10 +546,14 @@ void parse_ret_settings(const char *json)
                 s->vtype = TYPE_UINT32;
             } else if (strcmp(type->valuestring, "double") == 0) {
                 s->vtype = TYPE_DOUBLE;
+            } else if (strcmp(type->valuestring, "uint16") == 0) {
+                s->vtype = TYPE_UINT16;
+            } else if (strcmp(type->valuestring, "uint8") == 0) {
+                s->vtype = TYPE_UINT8;
             } else {
                 fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
                 cJSON_Delete(root);
-                return;  // exit on unsupported type
+                return;
             }
         }
     }
