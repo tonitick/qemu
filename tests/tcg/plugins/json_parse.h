@@ -104,6 +104,11 @@ typedef struct {
     int non_ptr_iters; /* iterator for non-pointer values */
 
     ValueUnion concrete_value; /* for logging concrete input for paths */
+
+    // for mem arg analysis for sub-semantics recovery
+    bool is_written;
+    bool is_read;
+    bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
@@ -270,6 +275,13 @@ void parse_arg_settings(const char *json)
 
     cJSON_Delete(root);
     arg_count = idx;  /* store the count in a global variable */
+
+    // init sub-semantic fields to false
+    for (size_t i = 0; i < arg_count; i++) {
+        arg_settings[i].is_written = false;
+        arg_settings[i].is_read = false;
+        arg_settings[i].is_sub_semantic_input = false;
+    }
 }
 
 // dump
@@ -477,6 +489,253 @@ error:
     return NULL;
 }
 
+// ===============================================================================================================================
+// func start input, for sub-semantic recovery
+// ===============================================================================================================================
+ArgSetting func_start_arg_settings[MAX_ARGS];
+size_t func_start_arg_count = 0;
+
+/* -------------------------------------------------------------------------- */
+/* Parsing utilities (parse_json_args)                                        */
+/* -------------------------------------------------------------------------- */
+// parse
+void parse_func_start_arg_settings(const char *json);
+void parse_func_start_arg_settings(const char *json)
+{
+    cJSON *root = cJSON_Parse(json);
+    if (!root || !cJSON_IsObject(root)) {
+        fprintf(stderr, "Invalid JSON root object\n");
+        cJSON_Delete(root);
+        return;
+    }
+
+    size_t idx = 0;
+    for (cJSON *arg = root->child; arg && idx < MAX_ARGS; arg = arg->next, ++idx) {
+        ArgSetting *s = &func_start_arg_settings[idx];
+        memset(s, 0, sizeof(*s));
+        strncpy(s->name, arg->string, MAX_NAME - 1);
+
+        /* reg or addr (mutually exclusive) */
+        cJSON *reg = cJSON_GetObjectItemCaseSensitive(arg, "reg");
+        if (cJSON_IsString(reg)) {
+            strncpy(s->reg, reg->valuestring, MAX_REG - 1);
+            s->location_type = TYPE_REG;
+        }
+        cJSON *addr = cJSON_GetObjectItemCaseSensitive(arg, "addr");
+        if (cJSON_IsNumber(addr)) {
+            s->addr = addr->valueint;
+            s->location_type = TYPE_ADDR;
+        }
+
+        /* type */
+        cJSON *type = cJSON_GetObjectItemCaseSensitive(arg, "type");
+        if (cJSON_IsString(type)) {
+            if (strcmp(type->valuestring, "unknown") == 0) {
+                s->vtype = TYPE_UNKNOWN;
+            }
+            else if (strcmp(type->valuestring, "float") == 0) {
+                s->vtype = TYPE_FLOAT;
+            } else if (strcmp(type->valuestring, "uint32") == 0) {
+                s->vtype = TYPE_UINT32;
+            } else if (strcmp(type->valuestring, "double") == 0) {
+                s->vtype = TYPE_DOUBLE;
+            } else if (strcmp(type->valuestring, "uint16") == 0) {
+                s->vtype = TYPE_UINT16;
+            } else if (strcmp(type->valuestring, "uint8") == 0) {
+                s->vtype = TYPE_UINT8;
+            } else {
+                fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
+                cJSON_Delete(root);
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        /* size */
+        cJSON *size = cJSON_GetObjectItemCaseSensitive(arg, "size");
+        if (cJSON_IsNumber(size)) {
+            s->sz = (size_t)size->valueint;
+        } else {
+            // default size
+            if (s->vtype == TYPE_FLOAT) {
+                s->sz = 4; // float32
+            } else if (s->vtype == TYPE_UINT32) {
+                s->sz = 4; // uint32
+            } else {
+                s->sz = 0; // indicating unknown size
+            }
+        }
+
+        /* is_pointer */
+        cJSON *is_ptr = cJSON_GetObjectItemCaseSensitive(arg, "is_pointer");
+        if (cJSON_IsString(is_ptr)) {
+            if (strcmp(is_ptr->valuestring, "true") == 0) {
+                s->is_pointer = IS_PTR_TRUE;
+            } else if (strcmp(is_ptr->valuestring, "false") == 0) {
+                s->is_pointer = IS_PTR_FALSE;
+            } else if (strcmp(is_ptr->valuestring, "unknown") == 0) {
+                s->is_pointer = IS_PTR_UNKNOWN;
+            } else {
+                // s->is_pointer = IS_PTR_UNKNOWN;
+                fprintf(stderr, "Unsupported is_pointer value '%s' in '%s'\n", is_ptr->valuestring, s->name);
+                cJSON_Delete(root);
+                exit(EXIT_FAILURE);  // exit on unsupported value
+            }
+        } else {
+            s->is_pointer = IS_PTR_UNKNOWN; // default
+        }
+
+
+        /* value_range: array of 1 or 2 numbers */
+        cJSON *vr = cJSON_GetObjectItemCaseSensitive(arg, "value_range");
+        if (cJSON_IsArray(vr)) {
+            size_t n = cJSON_GetArraySize(vr);
+            s->value_count = n > 2 ? 2 : n;
+            for (size_t i = 0; i < s->value_count; ++i) {
+                cJSON *num = cJSON_GetArrayItem(vr, (int)i);
+                // s->value_range[i] = cJSON_IsNumber(num) ? num->valuedouble : 0.0;
+                if (cJSON_IsNumber(num)) {
+                    if (s->vtype == TYPE_FLOAT) {
+                        s->value_range[i].f = num->valuedouble;  // store as float
+                    } else if (s->vtype == TYPE_DOUBLE) {
+                        s->value_range[i].d = num->valuedouble;
+                    } else if (s->vtype == TYPE_UINT32) {
+                        s->value_range[i].u32 = (uint32_t)num->valueint;  // store as uint32_t
+                    } else if (s->vtype == TYPE_UINT16) {
+                        s->value_range[i].u32 = (uint32_t)num->valueint;
+                    } else if (s->vtype == TYPE_UINT8) {
+                        s->value_range[i].u32 = (uint32_t)num->valueint;
+                    } else {
+                        fprintf(stderr, "Unsupported type for value_range in '%s'\n", s->name);
+                        s->value_count = 0;  // reset count on error
+                        break;
+                    }
+                } else {
+                    fprintf(stderr, "Invalid value in value_range for '%s'\n", s->name);
+                    s->value_count = 0;  // reset count on error
+                    break;
+                }
+
+            }
+        }
+
+        // concrete_value (optional)
+        cJSON *cv = cJSON_GetObjectItemCaseSensitive(arg, "concrete_value");
+        if (cJSON_IsNumber(cv)) {
+            if (s->vtype == TYPE_FLOAT) {
+                s->concrete_value.f = cv->valuedouble;
+            } else if (s->vtype == TYPE_DOUBLE) {
+                s->concrete_value.d = cv->valuedouble;
+            } else if (s->vtype == TYPE_UINT32) {
+                s->concrete_value.u32 = (uint32_t)cv->valueint;
+            } else if (s->vtype == TYPE_UINT16) {
+                s->concrete_value.u32 = (uint32_t)cv->valueint;
+            } else if (s->vtype == TYPE_UINT8) {
+                s->concrete_value.u32 = (uint32_t)cv->valueint;
+            } else {
+                fprintf(stderr, "Unsupported type for concrete_value in '%s'\n", s->name);
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+    func_start_arg_count = idx;  /* store the count in a global variable */
+
+    // init sub-semantic fields to false
+    for (size_t i = 0; i < func_start_arg_count; i++) {
+        func_start_arg_settings[i].is_written = false;
+        func_start_arg_settings[i].is_read = false;
+        func_start_arg_settings[i].is_sub_semantic_input = false;
+    }
+}
+
+// dump
+void dump_func_start_arg_settings(void);
+void dump_func_start_arg_settings(void)
+{
+    puts("Parsed arguments:");
+    for (size_t i = 0; i < func_start_arg_count; ++i) {
+        const ArgSetting *p = &func_start_arg_settings[i];
+        if (p->vtype == TYPE_UNKNOWN) {
+            printf("Arg %zu: name='%s', type=unknown, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_FLOAT) {
+            printf("Arg %zu: name='%s', type=float, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_DOUBLE) {
+            printf("Arg %zu: name='%s', type=double, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT32) {
+            printf("Arg %zu: name='%s', type=uint32, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT16) {
+            printf("Arg %zu: name='%s', type=uint16, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else if (p->vtype == TYPE_UINT8) {
+            printf("Arg %zu: name='%s', type=uint8, location_type=%s, ",
+                   i, p->name,
+                   p->location_type == TYPE_REG ? "reg" : "addr");
+        } else {
+            fprintf(stderr, "Unknown type for argument '%s'\n", p->name);
+            exit(EXIT_FAILURE);
+        }
+        if (p->location_type == TYPE_REG) {
+            printf("reg=%s, ", p->reg);
+        } else if (p->location_type == TYPE_ADDR) {
+            printf("addr=0x%lx, ", p->addr);
+        }
+
+        if (p->sz != 0) {
+            printf("size=%zu bytes, ", p->sz);
+        } else {
+            printf("size=unknown, ");
+        }
+
+        if (p->is_pointer == IS_PTR_TRUE) {
+            printf("is_pointer=true, ");
+        } else if (p->is_pointer == IS_PTR_FALSE) {
+            printf("is_pointer=false, ");
+        } else {
+            printf("is_pointer=unknown, ");
+        }
+
+        printf("value_range=[");
+        for (size_t j = 0; j < p->value_count; ++j) {
+            if (p->vtype == TYPE_FLOAT) {
+                printf("%g%s", p->value_range[j].f,
+                       j + 1 == p->value_count ? "" : ", ");
+            } else if (p->vtype == TYPE_DOUBLE) {
+                printf("%g%s", p->value_range[j].d,
+                       j + 1 == p->value_count ? "" : ", ");
+            } else if (p->vtype == TYPE_UINT32) {
+                printf("%u%s", p->value_range[j].u32,
+                       j + 1 == p->value_count ? "" : ", ");
+            }
+        }
+        printf("]\n");
+    }
+}
+
+// export
+void parse_func_start_json_args(const char *filename);
+void parse_func_start_json_args(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_func_start_arg_settings(json);
+
+    free(json);
+
+    dump_func_start_arg_settings();
+}
 
 
 // ===============================================================================================================================

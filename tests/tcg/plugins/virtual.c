@@ -433,8 +433,8 @@ static void setargs(unsigned int cpu_index, void *udata) {
     sp_val.u32 = stack_ptr;
     qemu_plugin_set_register((uint8_t *)&sp_val, ARM_V7M_REG_R13);
 
-    for (size_t i = 0; i < arg_count; i++) {
-        ArgSetting *setting = &arg_settings[i];
+    for (size_t i = 0; i < func_start_arg_count; i++) {
+        ArgSetting *setting = &func_start_arg_settings[i];
         // use range to generate random value
         ValueUnion value = setting->concrete_value;
         // set value to corresponding location
@@ -485,6 +485,256 @@ static void setargs(unsigned int cpu_index, void *udata) {
         setting->concrete_value = value; // use a field in ArgSetting to store concrete input value instead
     }
 }
+
+// static int sub_semantic_cur_iteration = 0;
+// static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
+//     // print pc for debugging
+//     // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not accurate sometimes
+//     uint64_t pc = *(uint64_t *)udata;
+//     printf("[VI randargs_sub_semantics] Current PC: 0x%08lx\n", pc);
+
+//     sub_semantic_reached = true;
+
+//     if (sub_semantic_cur_iteration >= MAX_FUZZ_ITERATIONS) {
+//         printf("[VI randargs_sub_semantics] reached max fuzzing iterations %d, dump existing path logs andexiting\n", MAX_FUZZ_ITERATIONS);
+//         dump_existing_path_logs(dump_path);
+//         exit(0);
+//     }
+//     if (check_path_log_size_and_dump(dump_path)) {
+//         printf("[VI randargs_sub_semantics] log finished, dump related path logs\n");
+//         // dump_all_path_logs();
+//         exit(0);
+//     }
+//     if (sub_semantic_cur_iteration == 0) {
+//         // clear path logs
+//         clear_all_path_logs();
+//         // set non_ptr_iters to 0 for all args
+//         for (size_t i = 0; i < arg_count; i++) {
+//             ArgSetting *setting = &arg_settings[i];
+//             setting->non_ptr_iters = 0;
+//         }
+//     }
+//     else if (is_logging_valid) {
+//         // log previous iteration values
+//         // if (is_logging_valid) {
+//         // record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
+//         record_trace_values(current_path, current_path_len);
+//         // }
+//         // clear
+//         // current_path_len = 0;
+//     }
+//     else if (!is_logging_valid) {
+//         clear_all_path_logs(); // zz: log only when arg settings can stably generate valid logs
+//         // printf("[VI randargs] dump path log after clear:\n");
+//         // dump_all_path_logs();
+
+//         // dump arg settings for debugging
+//         printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
+//         dump_arg_settings();
+//         // fix all unknown pointer args to non-pointer integers
+//         // TODO: take care of the control flows, assume the same path for now
+//     }
+
+//     // set stack pointer
+//     ValueUnion sp_val;
+//     sp_val.u32 = stack_ptr;
+//     qemu_plugin_set_register((uint8_t *)&sp_val, ARM_V7M_REG_R13);
+//     // reset stack var write tracking
+//     stack_var_write_count = 0;
+
+//     // increment non_ptr_iters for all unknown pointer args
+//     for (size_t i = 0; i < arg_count; i++) {
+//         ArgSetting *setting = &arg_settings[i];
+//         if (setting->vtype == TYPE_UINT32 && setting->is_pointer == IS_PTR_UNKNOWN) {
+//             setting->non_ptr_iters++;
+//             printf("[VI randargs] unknown pointer arg '%s' has been tried %d times\n", setting->name, setting->non_ptr_iters);
+//             if (setting->non_ptr_iters > NON_PTR_ITER_MAX) {
+//                 printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer after %d tries\n", setting->name, setting->non_ptr_iters);
+//                 if (setting->location_type == TYPE_ADDR) { // heuristic: all 4 bytes struct are floats (todo: improve)
+//                     // set to float
+//                     setting->is_pointer = IS_PTR_FALSE;
+//                     setting->vtype = TYPE_FLOAT;
+//                     setting->value_count = 2;
+//                     setting->value_range[0].f = default_float_range[0];
+//                     setting->value_range[1].f = default_float_range[1];
+
+//                     clear_all_path_logs();
+//                 }
+//                 else if (setting->location_type == TYPE_REG) { // float regs are identified statically
+//                     // set to float
+//                     setting->is_pointer = IS_PTR_FALSE;
+//                     setting->vtype = TYPE_UINT32;
+//                     setting->value_count = 2;
+//                     setting->value_range[0].u32 = default_int_range[0];
+//                     setting->value_range[1].u32 = default_int_range[1];
+//                     clear_all_path_logs();
+//                 }
+//                 dump_arg_settings(); // for debug
+//             }
+//         }
+//     }
+
+//     current_path_len = 0;
+
+//     // main logic: rand variables and set registers/memory
+//     is_logging_valid = true;
+//     cur_iteration++;
+//     printf("[VI randargs] iteration %d:\n", cur_iteration);
+//     // iterate arg_settings
+//     for (size_t i = 0; i < arg_count; i++) {
+//         ArgSetting *setting = &arg_settings[i];
+//         // use range to generate random value
+//         ValueUnion value;
+//         // potential pointer types
+//         if (setting->vtype == TYPE_UNKNOWN) { // only for potential pointer types, size = 4
+//             // treat as uint32 first
+//             // value_count shoule be 0
+//             if (setting->value_count != 0) {
+//                 fprintf(stderr, "[VI randargs] Invalid value count for unknown type in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//             setting->vtype = TYPE_UINT32; // default to uint32
+
+//             // perror("randargs");
+//             // exit(EXIT_FAILURE);
+//             // use default [0, 2]
+//             setting->value_count = 2;
+//             setting->value_range[0].u32 = default_int_range[0];
+//             setting->value_range[1].u32 = default_int_range[1];
+//             value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+//         }
+//         // other types
+//         if (setting->vtype == TYPE_FLOAT) {
+//             // assert(setting->value_count == 2);
+//             if (setting->value_count == 1) {
+//                 value.f = setting->value_range[0].f;
+//             }
+//             else if (setting->value_count == 2) {
+//                 // Generate a random float in the range
+//                 value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
+//             } else {
+//                 fprintf(stderr, "[VI randargs] Invalid value count for float type in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//         } else if (setting->vtype == TYPE_DOUBLE) {
+//             // assert(setting->value_count == 2);
+//             if (setting->value_count == 1) {
+//                 value.d = setting->value_range[0].d;
+//             }
+//             else if (setting->value_count == 2) {
+//                 // Generate a random double in the range
+//                 value.d = get_random_double(setting->value_range[0].d, setting->value_range[1].d);
+//                 printf("[VI randargs] generated double value %g for setting '%s'\n", value.d, setting->name);
+//             } else {
+//                 fprintf(stderr, "[VI randargs] Invalid value count for double type in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//         } else if (setting->vtype == TYPE_UINT32) {
+//             if (setting->value_count == 1) {
+//                 value.u32 = setting->value_range[0].u32;
+//             }
+//             else if (setting->value_count == 2) {
+//                 // Generate a random uint32 in the range
+//                 value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+//             } else if (setting->value_count == 0 && setting->is_pointer == IS_PTR_TRUE) { // check is_pointer here
+//                 // handle struct allocation
+//                 setting->value_count = 1;
+//                 setting->value_range[0].u32 = cur_ptr_addr;
+//                 assert(setting->sz == 4); // 4 bytes addr size in arm
+//                 struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, setting->sz, true);
+//                 cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
+//                 allocated_structs[allocated_struct_count++] = new_struct;
+//                 value.u32 = setting->value_range[0].u32;
+//             }
+//             else if (setting->value_count == 0 && setting->is_pointer == IS_PTR_UNKNOWN) {
+//                 // treat as pointer first
+//                 // setting->is_pointer = IS_PTR_TRUE;
+//                 // handle struct allocation
+//                 setting->value_count = 1;
+//                 setting->value_range[0].u32 = cur_ptr_addr;
+//                 assert(setting->sz == 4); // 4 bytes addr size in arm
+//                 struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, setting->sz, false);
+//                 cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
+//                 allocated_structs[allocated_struct_count++] = new_struct;
+//                 value.u32 = setting->value_range[0].u32;
+//             } else {
+//                 fprintf(stderr, "[VI randargs] Invalid value count for uint32 type in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//         } else if (setting->vtype == TYPE_UINT16 || setting->vtype == TYPE_UINT8) {
+//             if (setting->value_count == 1) {
+//                 value.u32 = setting->value_range[0].u32;
+//             }
+//             else if (setting->value_count == 2) {
+//                 // Generate a random uint32 in the range
+//                 value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
+//             }
+//             else {
+//                 fprintf(stderr, "[VI randargs] Invalid value count for uint8/16 type in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//         } else {
+//             fprintf(stderr, "[VI randargs] Unsupported value type in setting '%s'\n", setting->name);
+//             // perror("randargs");
+//             exit(EXIT_FAILURE);
+//         }
+
+//         // set value to corresponding location
+//         if (setting->location_type == TYPE_REG) {
+//             if (setting->vtype == TYPE_FLOAT) {
+//                 printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.f);
+//             } else if (setting->vtype == TYPE_DOUBLE) {
+//                 printf("[VI randargs] setting register %s to value: %g\n", setting->reg, value.d);
+//             } else if (setting->vtype == TYPE_UINT32) {
+//                 printf("[VI randargs] setting register %s to value: %u\n", setting->reg, value.u32);
+//             }
+//             else {
+//                 fprintf(stderr, "[VI randargs] Unsupported value type for register in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//             qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg)); // TODO: check with arslan, looks like it write 8 bytes for all float regs?
+//         } else if (setting->location_type == TYPE_ADDR) {
+//             if (setting->vtype == TYPE_FLOAT) {
+//                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+//                 printf("[VI randargs] writing float value %g to memory address: 0x%lx\n", value.f, setting->addr);
+//             } else if (setting->vtype == TYPE_DOUBLE) {
+//                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 8);
+//                 printf("[VI randargs] writing double value %g to memory address: 0x%lx\n", value.d, setting->addr);
+//             } else if (setting->vtype == TYPE_UINT32) {
+//                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+//                 printf("[VI randargs] writing uint32 value %u to memory address: 0x%lx\n", value.u32, setting->addr);
+//             }
+//             else if (setting->vtype == TYPE_UINT16) {
+//                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 2);
+//                 printf("[VI randargs] writing uint16 value %u to memory address: 0x%lx\n", (uint16_t)(value.u32 & 0xFFFF), setting->addr);
+//             }
+//             else if (setting->vtype == TYPE_UINT8) {
+//                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 1);
+//                 printf("[VI randargs] writing uint8 value %u to memory address: 0x%lx\n", (uint8_t)(value.u32 & 0xFF), setting->addr);
+//             }
+//             else {
+//                 fprintf(stderr, "[VI randargs] Unsupported value type for memory in setting '%s'\n", setting->name);
+//                 perror("randargs");
+//                 exit(EXIT_FAILURE);
+//             }
+//             // qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
+//         } else {
+//             fprintf(stderr, "[VI randargs] Unsupported location type in setting '%s'\n", setting->name);
+//             perror("randargs");
+//             exit(EXIT_FAILURE);
+//         }
+
+//         // log values
+//         // logged_in_values[i] = value;
+//         setting->concrete_value = value; // use a field in ArgSetting to store concrete input value instead
+//     }
+// }
 
 // --------------------------------------------------------------------------------------
 // logrets
@@ -1129,6 +1379,9 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
 	filename = get_arg("virtual", argc, argv);
 	parse_rules_file(filename);
+
+    filename = get_arg("func_start_args", argc, argv);
+    parse_func_start_json_args(filename);
 
     filename = get_arg("args", argc, argv);
     parse_json_args(filename);
