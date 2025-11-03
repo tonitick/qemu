@@ -652,7 +652,7 @@ void parse_func_start_arg_settings(const char *json)
 void dump_func_start_arg_settings(void);
 void dump_func_start_arg_settings(void)
 {
-    puts("Parsed arguments:");
+    puts("Parsed func_start arguments:");
     for (size_t i = 0; i < func_start_arg_count; ++i) {
         const ArgSetting *p = &func_start_arg_settings[i];
         if (p->vtype == TYPE_UNKNOWN) {
@@ -941,6 +941,14 @@ int same_mem_locs(const ArgSetting *a, uint64_t addr, size_t sz)
     if (a->location_type != TYPE_ADDR) return 0; /* not a memory location */
     if (a->sz == 0 || sz == 0) return 0; /* unknown size */
     if (a->addr == addr && a->sz == sz) return 1; /* exact match */
+    return 0; /* no match */
+}
+
+int same_mem_locs_ret(const RetSetting *r, uint64_t addr);
+int same_mem_locs_ret(const RetSetting *r, uint64_t addr)
+{
+    if (r->location_type != TYPE_ADDR) return 0; /* not a memory location */
+    if (r->addr == addr) return 1; /* exact match */
     return 0; /* no match */
 }
 

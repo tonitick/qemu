@@ -13,6 +13,10 @@
 #include "uthash.h"
 #include "json_parse.h"
 
+// ===============================================================================================================================
+// End-to-end recovery, with path identification
+// ===============================================================================================================================
+
 /* ---------- current path ---------- */
 #define MAX_PATH_LENGTH 1024
 uint64_t current_path[MAX_PATH_LENGTH];
@@ -473,5 +477,131 @@ void dump_existing_path_logs(char* dump_dir) {
 
 /* ---------- Dump concrete input that trigger the path ---------- */
 
+// ===============================================================================================================================
+// Sub-semantic Utilities
+// ===============================================================================================================================
+ArgValueLogs   arglog_subsem[MAX_ARGS]; // inputs
+RetValueLogs   retlog_subsem[MAX_ARGS]; // outputs
 
+int check_sub_semantic_log_size_and_dump(char* dump_dir);
+int check_sub_semantic_log_size_and_dump(char* dump_dir) {
+    // if all sub-semantic log size reach MAX_PER_PATH_LOG_SIZE, dump the related path logs
+    int need_dump = 0;
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (arglog_subsem[i].count >= MAX_PER_PATH_LOG_SIZE) {
+            need_dump = 1;
+            break;
+        }
+    }
+
+    if (need_dump) {
+        char filepath[256] = {0};
+        snprintf(filepath, sizeof(filepath), "%s/in_outs.txt", dump_dir);
+        FILE *f = fopen(filepath, "w");
+        if (!f) {
+            printf("Failed to open file %s for writing\n", filepath);
+            exit(EXIT_FAILURE);
+        }
+
+        // dump the entry
+        printf("Dumping sub-semantic log:\n");
+
+        for (size_t i = 0; i < arg_count; ++i) {
+            if (arg_settings[i].vtype == TYPE_FLOAT) {
+                printf("  IN  %-4s\n", arg_settings[i].name);
+                fprintf(f, "[IN] %s: ", arg_settings[i].name);
+                for (size_t j = 0; j < arglog_subsem[i].count; ++j) {
+                    printf("       %g\n", arglog_subsem[i].data[j].f);
+                    fprintf(f, "%.10f ", arglog_subsem[i].data[j].f);
+                }
+                fprintf(f, "\n");
+            }
+            else if (arg_settings[i].vtype == TYPE_DOUBLE) {
+                printf("  IN  %-4s\n", arg_settings[i].name);
+                fprintf(f, "[IN] %s: ", arg_settings[i].name);
+                for (size_t j = 0; j < arglog_subsem[i].count; ++j) {
+                    printf("       %g\n", arglog_subsem[i].data[j].d);
+                    fprintf(f, "%.10g ", arglog_subsem[i].data[j].d);
+                }
+                fprintf(f, "\n");
+            }
+        }
+
+        for (size_t i = 0; i < ret_count; ++i) {
+            if (ret_settings[i].vtype == TYPE_FLOAT) {
+                printf("  OUT %-4s\n", ret_settings[i].name);
+                fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                for (size_t j = 0; j < retlog_subsem[i].count; ++j) {
+                    printf("       %g\n", retlog_subsem[i].data[j].f);
+                    fprintf(f, "%.10f ", retlog_subsem[i].data[j].f);
+                }
+                fprintf(f, "\n");
+            }
+            else if (ret_settings[i].vtype == TYPE_DOUBLE) {
+                printf("  OUT %-4s\n", ret_settings[i].name);
+                fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                for (size_t j = 0; j < retlog_subsem[i].count; ++j) {
+                    printf("       %g\n", retlog_subsem[i].data[j].d);
+                    fprintf(f, "%.10g ", retlog_subsem[i].data[j].d);
+                }
+                fprintf(f, "\n");
+            }
+        }
+        fclose(f);
+
+        return 1; // success
+    }
+    return 0; // not enough logs
+}
+
+void clear_all_sub_semantic_logs(void);
+void clear_all_sub_semantic_logs(void) {
+    for (size_t i = 0; i < arg_count; ++i) {
+        arglog_subsem[i].count = 0;
+    }
+    for (size_t i = 0; i < ret_count; ++i) {
+        retlog_subsem[i].count = 0;
+    }
+}
+
+void record_sub_semantic_trace_values(void);
+void record_sub_semantic_trace_values(void) {
+    // input/ouput pairs
+    for (size_t i = 0; i < arg_count; ++i) {
+        ArgValueLogs *L = &arglog_subsem[i];
+        if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
+        if (arg_settings[i].vtype == TYPE_FLOAT)
+            L->data[L->count++].f = arg_settings[i].concrete_value.f;
+        else if (arg_settings[i].vtype == TYPE_DOUBLE)
+            L->data[L->count++].d = arg_settings[i].concrete_value.d;
+        else if (arg_settings[i].vtype == TYPE_UINT32)
+            L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
+        else if (arg_settings[i].vtype == TYPE_UINT16)
+            L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
+        else if (arg_settings[i].vtype == TYPE_UINT8)
+            L->data[L->count++].u32 = arg_settings[i].concrete_value.u32;
+        else {
+            fprintf(stderr, "Unsupported arg type in record_sub_semantic_trace_values for arg '%s'\n", arg_settings[i].name);
+            exit(EXIT_FAILURE);
+        }
+    }
+    for (size_t i = 0; i < ret_count; ++i) {
+        RetValueLogs *L = &retlog_subsem[i];
+        if (L->count >= MAX_PER_PATH_LOG_SIZE) continue;
+        if (ret_settings[i].vtype == TYPE_FLOAT)
+            L->data[L->count++].f = ret_settings[i].concrete_value.f;
+        else if (ret_settings[i].vtype == TYPE_DOUBLE)
+            L->data[L->count++].d = ret_settings[i].concrete_value.d;
+        else if (ret_settings[i].vtype == TYPE_UINT32)
+            L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
+        else if (ret_settings[i].vtype == TYPE_UINT16)
+            L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
+        else if (ret_settings[i].vtype == TYPE_UINT8)
+            L->data[L->count++].u32 = ret_settings[i].concrete_value.u32;
+        else {
+            fprintf(stderr, "Unsupported ret type in record_sub_semantic_trace_values for ret '%s'\n", ret_settings[i].name);
+            exit(EXIT_FAILURE);
+        }
+    }
+}
 #endif // PATH_LOGGER_H

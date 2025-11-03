@@ -1,2 +1,3 @@
 0x8109bf0 setargs
-0x810a0ea logrets_sub_semantics
+0x8109bf0 randargs_sub_semantics
+0x8109d0a logrets_sub_semantics

@@ -335,7 +335,49 @@ unsigned long sub_semantic_start;
 unsigned long sub_semantic_end;
 bool is_sub_semantic_collection = false;
 bool is_sub_semantics_mode = false;
+void parse_sub_semantic_start_file(const char *filename);
+void parse_sub_semantic_start_file(const char *filename) {
+    // a single line file with sub semantic start address in hex
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening sub semantic start file");
+        return;
+    }
 
+    char line[64];
+    if (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        sub_semantic_start = strtoull(line, &end, 0);
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid sub semantic start address: %s", line);
+        }
+    }
+    fclose(fp);
+    printf("Sub Semantic Start address parsed: 0x%lx\n", sub_semantic_start);
+}
+
+void parse_sub_semantic_end_file(const char *filename);
+void parse_sub_semantic_end_file(const char *filename) {
+    // a single line file with sub semantic end address in hex
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening sub semantic end file");
+        return;
+    }
+
+    char line[64];
+    if (fgets(line, sizeof(line), fp)) {
+        errno = 0;
+        char *end;
+        sub_semantic_end = strtoull(line, &end, 0);
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid sub semantic end address: %s", line);
+        }
+    }
+    fclose(fp);
+    printf("Sub Semantic End address parsed: 0x%lx\n", sub_semantic_end);
+}
 
 // ---------------------------------------------------------------
 // global structs
@@ -375,6 +417,7 @@ bool find_rule_by_address(unsigned long long addr, rule_t **out_rule) {
 // virtual instructions
 // ---------------------------------------------------------------
 bool function_reached = false;
+bool sub_semantic_reached = false;
 
 // static void raiseirq(unsigned int cpu_index, void *udata);
 // static void updatepc(unsigned int cpu_index, void *udata);
@@ -385,6 +428,7 @@ static void logpc(unsigned int cpu_index, void *udata);
 static void resetpc(unsigned int cpu_index, void *udata);
 static void randargs(unsigned int cpu_index, void *udata);
 static void setargs(unsigned int cpu_index, void *udata);
+static void randargs_sub_semantics(unsigned int cpu_index, void *udata);
 static void logrets(unsigned int cpu_index, void *udata);
 static void logrets_sub_semantics(unsigned int cpu_index, void *udata);
 static void clearpathlogs(unsigned int cpu_index, void *udata);
@@ -648,6 +692,7 @@ cb_entry_t cb_registry[] = {
     { "resetpc", resetpc},
     { "randargs", randargs },
     { "setargs", setargs},
+    { "randargs_sub_semantics", randargs_sub_semantics},
     { "logrets", logrets},
     { "logrets_sub_semantics", logrets_sub_semantics},
     { "clearpathlogs", clearpathlogs},
