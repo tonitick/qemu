@@ -607,8 +607,13 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
                 // Generate a random float in the range
                 value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
             } else {
-                fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for float type in setting '%s'\n", setting->name);
-                exit(EXIT_FAILURE);
+                // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for float type in setting '%s'\n", setting->name);
+                // exit(EXIT_FAILURE);
+                // default to [0.5, 5.0]
+                setting->value_count = 2;
+                setting->value_range[0].f = default_float_range[0];
+                setting->value_range[1].f = default_float_range[1];
+                value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
             }
         } else if (setting->vtype == TYPE_DOUBLE) {
             // assert(setting->value_count == 2);
