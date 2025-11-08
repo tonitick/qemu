@@ -1379,23 +1379,23 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 
     for (i = 0; i < n; i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
-        if (!is_sub_semantics_mode) {
-            // check insn addr within [function_start, function_end]
-            unsigned long largest_func_end = func_ends[0];
-            for (size_t fi = 1; fi < func_end_count; fi++) {
-                if (func_ends[fi] > largest_func_end) {
-                    largest_func_end = func_ends[fi];
-                }
-            }
-            if (qemu_plugin_insn_vaddr(insn) < func_start || qemu_plugin_insn_vaddr(insn) > largest_func_end) {
-                continue;
+        // if (!is_sub_semantics_mode) {
+        // check insn addr within [function_start, function_end]
+        unsigned long largest_func_end = func_ends[0];
+        for (size_t fi = 1; fi < func_end_count; fi++) {
+            if (func_ends[fi] > largest_func_end) {
+                largest_func_end = func_ends[fi];
             }
         }
-        else {
-            if (qemu_plugin_insn_vaddr(insn) < sub_semantic_start || qemu_plugin_insn_vaddr(insn) > sub_semantic_end) {
-                continue;
-            }
+        if (qemu_plugin_insn_vaddr(insn) < func_start || qemu_plugin_insn_vaddr(insn) > largest_func_end) {
+            continue;
         }
+        // }
+        // else {
+        //     if (qemu_plugin_insn_vaddr(insn) < sub_semantic_start || qemu_plugin_insn_vaddr(insn) > sub_semantic_end) {
+        //         continue;
+        //     }
+        // }
 
 		// //Highest priority: Logger
 		// LookupResult ret = lookup_addr(qemu_plugin_insn_vaddr(insn));
@@ -1455,18 +1455,20 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         for (size_t rid = 0; rid < rules_count; rid++) {
             rule_t* rule = &rules[rid];
             if (rule->address == qemu_plugin_insn_vaddr(insn)) {
-                printf("[INSTALL randargs/logrets] 0x%lx\n", instr_addrs[instr_idx]);
+                printf("[INSTALL randargs/logrets/setargs/randargs_sub_semantics/logrets_sub_semantics] 0x%lx\n", instr_addrs[instr_idx]);
                 qemu_plugin_register_vcpu_insn_exec_cb(
                     insn, rule->func, QEMU_PLUGIN_CB_RW_REGS, (void *)&instr_addrs[instr_idx]);
             }
         }
         // bb start
-        for (size_t j = 0; j < bb_count; j++) {
-            if (bb_starts[j] == qemu_plugin_insn_vaddr(insn)) {
-                // Register the callback for bb start
-                printf("[INSTALL bb start] 0x%lx\n", qemu_plugin_insn_vaddr(insn));
-                qemu_plugin_register_vcpu_insn_exec_cb(
-                    insn, logbbstart, QEMU_PLUGIN_CB_RW_REGS, (void *)&bb_starts[j]);
+        if (!is_sub_semantics_mode) { // only for end-to-end mode
+            for (size_t j = 0; j < bb_count; j++) {
+                if (bb_starts[j] == qemu_plugin_insn_vaddr(insn)) {
+                    // Register the callback for bb start
+                    printf("[INSTALL bb start] 0x%lx\n", qemu_plugin_insn_vaddr(insn));
+                    qemu_plugin_register_vcpu_insn_exec_cb(
+                        insn, logbbstart, QEMU_PLUGIN_CB_RW_REGS, (void *)&bb_starts[j]);
+                }
             }
         }
 
@@ -1513,42 +1515,44 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
                 printf("[INSTALL disas] <disas error>\n");
             }
             g_byte_array_free(inst_bytes, TRUE);
-        } else {
-            size_t inst_len = qemu_plugin_insn_size(insn);
-            GByteArray *inst_bytes = g_byte_array_sized_new(inst_len);
-            g_byte_array_set_size(inst_bytes, inst_len);
-            size_t copied = qemu_plugin_insn_data(insn, inst_bytes->data, inst_len);
-            uint64_t insn_addr = qemu_plugin_insn_vaddr(insn);
+        } else { // sub-semantics mode
+            if (qemu_plugin_insn_vaddr(insn) >= sub_semantic_start && qemu_plugin_insn_vaddr(insn) < sub_semantic_end) {
+                size_t inst_len = qemu_plugin_insn_size(insn);
+                GByteArray *inst_bytes = g_byte_array_sized_new(inst_len);
+                g_byte_array_set_size(inst_bytes, inst_len);
+                size_t copied = qemu_plugin_insn_data(insn, inst_bytes->data, inst_len);
+                uint64_t insn_addr = qemu_plugin_insn_vaddr(insn);
 
-            printf("[INSTALL instr] 0x%08lx: ", (unsigned long)insn_addr);
-            for (size_t b = 0; b < copied; b++) {
-                printf("%02x ", inst_bytes->data[b]);
-            }
-            printf("\n");
-            // capstone disassembly
-            cs_option(cshandle, CS_OPT_DETAIL, CS_OPT_ON);
-            cs_disasm_count = cs_disasm(
-                cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
-            if (cs_disasm_count > 0) {
-                // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
-                // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
-                if (arm_insn_is_fp_mem_access(csinsn)) {
-                    printf("    [INSTALL subsem mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
-                    qemu_plugin_register_vcpu_mem_cb(insn, update_subsem_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
-                    printf("    [INSTALL subsem disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                printf("[INSTALL instr] 0x%08lx: ", (unsigned long)insn_addr);
+                for (size_t b = 0; b < copied; b++) {
+                    printf("%02x ", inst_bytes->data[b]);
                 }
-                // check if the instructino access memory
-                else if (arm_insn_accesses_mem(csinsn)) {
-                    printf("    [INSTALL subsem mem] instruction @0x%08lx accesses memory\n", csinsn[0].address);
-                    qemu_plugin_register_vcpu_mem_cb(insn, update_subsem_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
-                    printf("    [INSTALL subsem disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                printf("\n");
+                // capstone disassembly
+                cs_option(cshandle, CS_OPT_DETAIL, CS_OPT_ON);
+                cs_disasm_count = cs_disasm(
+                    cshandle, inst_bytes->data, inst_len, insn_addr, 1, &csinsn);
+                if (cs_disasm_count > 0) {
+                    // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
+                    // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                    if (arm_insn_is_fp_mem_access(csinsn)) {
+                        printf("    [INSTALL subsem mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
+                        qemu_plugin_register_vcpu_mem_cb(insn, update_subsem_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
+                        printf("    [INSTALL subsem disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                    }
+                    // check if the instructino access memory
+                    else if (arm_insn_accesses_mem(csinsn)) {
+                        printf("    [INSTALL subsem mem] instruction @0x%08lx accesses memory\n", csinsn[0].address);
+                        qemu_plugin_register_vcpu_mem_cb(insn, update_subsem_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
+                        printf("    [INSTALL subsem disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
+                    }
+
+
+                } else {
+                    printf("[INSTALL subsem disas] <disas error>\n");
                 }
-
-
-            } else {
-                printf("[INSTALL subsem disas] <disas error>\n");
+                g_byte_array_free(inst_bytes, TRUE);
             }
-            g_byte_array_free(inst_bytes, TRUE);
         }
 
 		//Second to Highest priority: Modifier (zz: move modifier after vi)
@@ -1580,15 +1584,15 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
     	}
 		}
 
-		//Lowest priority is detour
-		AddressTuple * tuple = is_target_address(qemu_plugin_insn_vaddr(insn));
-        if (tuple) {
-                qemu_plugin_u64 entry;
-                // In TCG frontend it is already set, if you want to modify it you will have to
-                // change CPSR.
-                entry.offset = (tuple->anchor & ~(0x1));
-                qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_REG, entry, 15);
-        }
+		// //Lowest priority is detour
+		// AddressTuple * tuple = is_target_address(qemu_plugin_insn_vaddr(insn));
+        // if (tuple) {
+        //         qemu_plugin_u64 entry;
+        //         // In TCG frontend it is already set, if you want to modify it you will have to
+        //         // change CPSR.
+        //         entry.offset = (tuple->anchor & ~(0x1));
+        //         qemu_plugin_register_vcpu_insn_exec_inline_per_vcpu(insn, QEMU_PLUGIN_INLINE_UPDATE_REG, entry, 15);
+        // }
     }
 
     printf("---- Finished translating TB at 0x%llx with %zu instructions ----\n",
