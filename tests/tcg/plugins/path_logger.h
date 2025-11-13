@@ -312,6 +312,8 @@ int check_path_log_size_and_dump(char* dump_dir) {
                 continue;
             }
             for (size_t i = 0; i < arg_count; ++i) {
+                // replace arg_settings concrete_value with e->concrete_inputs
+                arg_settings[i].concrete_value = e->concrete_inputs[i];
                 cJSON *arg_item = arg_setting_to_json(&arg_settings[i]);
                 if (arg_item == NULL) {
                     fprintf(stderr, "Failed to convert arg_setting to JSON for arg '%s'\n", arg_settings[i].name);
@@ -446,6 +448,8 @@ void dump_existing_path_logs(char* dump_dir) {
                 continue;
             }
             for (size_t i = 0; i < arg_count; ++i) {
+                // replace arg_settings concrete_value with e->concrete_inputs
+                arg_settings[i].concrete_value = e->concrete_inputs[i];
                 cJSON *arg_item = arg_setting_to_json(&arg_settings[i]);
                 if (arg_item == NULL) {
                     fprintf(stderr, "Failed to convert arg_setting to JSON for arg '%s'\n", arg_settings[i].name);
@@ -507,6 +511,7 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         printf("Dumping sub-semantic log:\n");
 
         for (size_t i = 0; i < arg_count; ++i) {
+            if (!arg_settings[i].is_sub_semantic_input) continue;
             if (arg_settings[i].vtype == TYPE_FLOAT) {
                 printf("  IN  %-4s\n", arg_settings[i].name);
                 fprintf(f, "[IN] %s: ", arg_settings[i].name);
