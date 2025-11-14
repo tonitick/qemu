@@ -109,6 +109,10 @@ typedef struct {
     bool is_written;
     bool is_read;
     bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
+
+    // // for mem var calling interface
+    // char bas_ptr_name[MAX_NAME];
+    // int offset;
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
@@ -419,6 +423,7 @@ cJSON* create_json_from_value_union(const ValueUnion* val, IOValueType vtype) {
 }
 
 // export
+// dump concrete inputs that tigger specific paths
 cJSON* arg_setting_to_json(const ArgSetting* arg);
 cJSON* arg_setting_to_json(const ArgSetting* arg) {
     cJSON *json_obj = cJSON_CreateObject();
@@ -488,6 +493,79 @@ error:
     cJSON_Delete(json_obj);
     return NULL;
 }
+
+// dump call interface - input
+cJSON* arg_setting_to_call_interface_json(const ArgSetting* arg);
+cJSON* arg_setting_to_call_interface_json(const ArgSetting* arg) {
+    cJSON *json_obj = cJSON_CreateObject();
+    if (json_obj == NULL) {
+        return NULL;
+    }
+
+    /*
+     * The 'name' field is no longer serialized here,
+     * as it's used as the key in the parent object (e.g., "arg1").
+     */
+
+    // Handle location_type (conditional)
+    if (arg->location_type == TYPE_REG) {
+        if (cJSON_AddStringToObject(json_obj, "reg", arg->reg) == NULL) {
+            goto error;
+        }
+    } else {
+        if (cJSON_AddNumberToObject(json_obj, "addr", arg->addr) == NULL) {
+            goto error;
+        }
+    }
+
+    // Handle size
+    if (cJSON_AddNumberToObject(json_obj, "size", arg->sz) == NULL) {
+        goto error;
+    }
+
+    // Handle is_pointer
+    if (cJSON_AddStringToObject(json_obj, "is_pointer", is_pointer_type_to_string(arg->is_pointer)) == NULL) {
+        goto error;
+    }
+
+    // Handle type
+    if (cJSON_AddStringToObject(json_obj, "type", io_value_type_to_str(arg->vtype)) == NULL) {
+        goto error;
+    }
+
+    // // Handle value_range
+    // cJSON *range_array = cJSON_CreateArray();
+    // if (range_array == NULL) {
+    //     goto error;
+    // }
+    // cJSON_AddItemToObject(json_obj, "value_range", range_array); // Ownership transferred
+
+    // for (size_t i = 0; i < arg->value_count; i++) {
+    //     cJSON *range_item = create_json_from_value_union(&arg->value_range[i], arg->vtype);
+    //     if (range_item == NULL) {
+    //         goto error;
+    //     }
+    //     cJSON_AddItemToArray(range_array, range_item); // Ownership transferred
+    // }
+
+    // // Handle concrete_value
+    // cJSON *concrete_val = create_json_from_value_union(&arg->concrete_value, arg->vtype);
+    // if (concrete_val == NULL) {
+    //     goto error;
+    // }
+    // cJSON_AddItemToObject(json_obj, "concrete_value", concrete_val); // Ownership transferred
+
+    // non_ptr_iters is skipped as requested
+
+    return json_obj;
+
+error:
+    // If any "Add" operation failed, delete the entire object and return NULL.
+    cJSON_Delete(json_obj);
+    return NULL;
+}
+
+
 
 // ===============================================================================================================================
 // func start input, for sub-semantic recovery
@@ -750,6 +828,7 @@ typedef struct {
     ValueLocationType location_type; /* register or addr */
     char reg[MAX_REG];
     unsigned long addr;
+    size_t sz; // size in bytes
 
     IOValueType vtype;
     // Buffy log_buf; // needed by tcg logger, use VI for now
@@ -813,6 +892,21 @@ void parse_ret_settings(const char *json)
                 fprintf(stderr, "Unsupported type '%s' in '%s'\n", type->valuestring, s->name);
                 cJSON_Delete(root);
                 return;
+            }
+        }
+
+        /* size */
+        cJSON *size = cJSON_GetObjectItemCaseSensitive(arg, "size");
+        if (cJSON_IsNumber(size)) {
+            s->sz = (size_t)size->valueint;
+        } else {
+            // default size
+            if (s->vtype == TYPE_FLOAT) {
+                s->sz = 4; // float32
+            } else if (s->vtype == TYPE_UINT32) {
+                s->sz = 4; // uint32
+            } else {
+                s->sz = 0; // indicating unknown size
             }
         }
     }
@@ -931,6 +1025,48 @@ void parse_json_outs(const char *filename)
 //         }
 //     }
 // }
+
+// dump call interface - output
+cJSON* ret_setting_to_call_interface_json(const RetSetting* ret);
+cJSON* ret_setting_to_call_interface_json(const RetSetting* ret) {
+    cJSON *json_obj = cJSON_CreateObject();
+    if (json_obj == NULL) {
+        return NULL;
+    }
+
+    /*
+     * The 'name' field is no longer serialized here,
+     * as it's used as the key in the parent object (e.g., "ret1").
+     */
+
+    // Handle location_type (conditional)
+    if (ret->location_type == TYPE_REG) {
+        if (cJSON_AddStringToObject(json_obj, "reg", ret->reg) == NULL) {
+            goto error;
+        }
+    } else {
+        if (cJSON_AddNumberToObject(json_obj, "addr", ret->addr) == NULL) {
+            goto error;
+        }
+    }
+
+    // Handle type
+    if (cJSON_AddStringToObject(json_obj, "type", io_value_type_to_str(ret->vtype)) == NULL) {
+        goto error;
+    }
+
+    // Handle size
+    if (cJSON_AddNumberToObject(json_obj, "size", ret->sz) == NULL) {
+        goto error;
+    }
+
+    return json_obj;
+
+error:
+    // If any "Add" operation failed, delete the entire object and return NULL.
+    cJSON_Delete(json_obj);
+    return NULL;
+}
 
 // ===============================================================================================================================
 // Utility: check whether mem var locations are equivalent or overlap
