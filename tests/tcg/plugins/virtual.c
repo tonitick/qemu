@@ -636,8 +636,10 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
                 // Generate a random uint32 in the range
                 value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
             } else {
-                fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint32 type in setting '%s'\n", setting->name);
-                exit(EXIT_FAILURE);
+                // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint32 type in setting '%s'\n", setting->name);
+                // exit(EXIT_FAILURE);
+                // keep the previous value (pointer etc)
+                // TODO: not sure if this will cause some issues
             }
         } else if (setting->vtype == TYPE_UINT16 || setting->vtype == TYPE_UINT8) {
             if (setting->value_count == 1) {
@@ -1124,6 +1126,10 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
     // TODO: handle non-fp memory variables
     // check whether the address is in arg_settings
     // Iterate through arg_settings to find a match
+
+    // -----------------------------------------------------------------------------------------------------
+    // input
+    // -----------------------------------------------------------------------------------------------------
     bool found_arg_match = false;
     int match_idx = -1;
     for (size_t i = 0; i < arg_count; i++) {
@@ -1144,7 +1150,7 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
                 }
                 else { // the mem arg is read
                     if (!setting->is_written) { // read before write, mark as input
-                        printf("[MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx read before write in sub-semantics, marking arg setting '%s' as input\n", vaddr, setting->name);
+                        printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx read before write in sub-semantics, marking arg setting '%s' as input\n", vaddr, setting->name);
                         setting->is_read = true;
                         setting->is_sub_semantic_input = true;
                     }
@@ -1169,16 +1175,21 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
                 new_setting->value_range[1].f = default_float_range[1];
                 if (is_store) { // write to stack var, add to stack_vars_write
                     new_setting->is_written = true;
+                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as written\n", new_setting->name);
                 }
                 else {
                     new_setting->is_read = true;
                     new_setting->is_sub_semantic_input = true;
+                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as read (input)\n", new_setting->name);
                 }
             }
         }
 
     }
 
+    // -----------------------------------------------------------------------------------------------------
+    // output
+    // -----------------------------------------------------------------------------------------------------
     bool found_ret_match = false;
     for (size_t i = 0; i < ret_count; i++) {
         RetSetting *setting = &ret_settings[i];
@@ -1199,6 +1210,7 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
                 new_setting->addr = vaddr;
                 // new_setting->sz = sz_bytes;
                 new_setting->vtype = TYPE_FLOAT;
+                printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx is written & not found in ret_settings, creating new ret setting '%s'\n", vaddr, new_setting->name);
             }
         }
     }
