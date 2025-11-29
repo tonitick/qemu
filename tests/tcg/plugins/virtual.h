@@ -335,6 +335,7 @@ unsigned long sub_semantic_start;
 unsigned long sub_semantic_end;
 bool is_sub_semantic_collection = false;
 bool is_sub_semantics_mode = false;
+bool is_sub_semantic_last_stage = false;
 void parse_sub_semantic_start_file(const char *filename);
 void parse_sub_semantic_start_file(const char *filename) {
     // a single line file with sub semantic start address in hex

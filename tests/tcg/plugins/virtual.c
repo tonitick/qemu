@@ -638,8 +638,10 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
             } else {
                 // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint32 type in setting '%s'\n", setting->name);
                 // exit(EXIT_FAILURE);
-                // keep the previous value (pointer etc)
-                // TODO: not sure if this will cause some issues
+
+                // heuristic: integer inputs are mostly related to control flows or pointers, keep the same value
+                // FIXME: not sure if this will cause some issues
+                continue;
             }
         } else if (setting->vtype == TYPE_UINT16 || setting->vtype == TYPE_UINT8) {
             if (setting->value_count == 1) {
@@ -1142,10 +1144,11 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
         }
     }
     if (found_arg_match) {
+        ArgSetting *setting = &arg_settings[match_idx];
         if (sz_bytes == 4) { // only float
-            ArgSetting *setting = &arg_settings[match_idx];
             if (setting->vtype == TYPE_FLOAT) {
                 if (is_store) { // write to float arg setting
+                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx written, marking arg setting '%s' as is_written\n", vaddr, setting->name);
                     setting->is_written = true;
                 }
                 else { // the mem arg is read
@@ -1211,6 +1214,19 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
                 // new_setting->sz = sz_bytes;
                 new_setting->vtype = TYPE_FLOAT;
                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx is written & not found in ret_settings, creating new ret setting '%s'\n", vaddr, new_setting->name);
+            }
+            else if (is_sub_semantic_last_stage && found_arg_match) {
+                // for last stage of sub-semantics, if the written address matches an arg setting, create a ret setting
+                ArgSetting *arg_setting = &arg_settings[match_idx];
+                if (arg_setting->vtype == TYPE_FLOAT) {
+                    RetSetting *new_setting = &ret_settings[ret_count++];
+                    snprintf(new_setting->name, sizeof(new_setting->name), "%s", arg_setting->name);
+                    new_setting->location_type = TYPE_ADDR;
+                    new_setting->addr = vaddr;
+                    // new_setting->sz = sz_bytes;
+                    new_setting->vtype = TYPE_FLOAT;
+                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Last stage: Written address 0x%lx matches arg setting '%s', creating new ret setting '%s'\n", vaddr, arg_setting->name, new_setting->name);
+                }
             }
         }
     }
@@ -1396,7 +1412,6 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 
     for (i = 0; i < n; i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
-        // if (!is_sub_semantics_mode) {
         // check insn addr within [function_start, function_end]
         unsigned long largest_func_end = func_ends[0];
         for (size_t fi = 1; fi < func_end_count; fi++) {
@@ -1706,6 +1721,12 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     if (sub_semantics_mode_str && strcmp(sub_semantics_mode_str, "1") == 0) {
         is_sub_semantics_mode = true;
         printf("Sub-semantics mode enabled\n");
+    }
+
+    const char* sub_semantic_last_stage_str = get_arg("sub_semantic_last_stage", argc, argv);
+    if (sub_semantic_last_stage_str && strcmp(sub_semantic_last_stage_str, "1") == 0) {
+        is_sub_semantic_last_stage = true;
+        printf("Sub-semantics last stage enabled\n");
     }
 
 	// qemu_plugin_unimp_export_device((void *)&importer);
