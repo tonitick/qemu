@@ -602,7 +602,7 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         for (size_t i = 0; i < ret_count; ++i) {
             if (ret_settings[i].vtype == TYPE_FLOAT) {
                 printf("  OUT %-4s\n", ret_settings[i].name);
-                fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                fprintf(f, "[OUT %lu] %s: ", ret_settings[i].written_time, ret_settings[i].name); // add last written time to variable name
                 for (size_t j = 0; j < retlog_subsem[i].count; ++j) {
                     printf("       %g\n", retlog_subsem[i].data[j].f);
                     fprintf(f, "%.10f ", retlog_subsem[i].data[j].f);
@@ -611,7 +611,7 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
             }
             else if (ret_settings[i].vtype == TYPE_DOUBLE) {
                 printf("  OUT %-4s\n", ret_settings[i].name);
-                fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+                fprintf(f, "[OUT %lu] %s: ", ret_settings[i].written_time, ret_settings[i].name); // add last written time to variable name
                 for (size_t j = 0; j < retlog_subsem[i].count; ++j) {
                     printf("       %g\n", retlog_subsem[i].data[j].d);
                     fprintf(f, "%.10g ", retlog_subsem[i].data[j].d);

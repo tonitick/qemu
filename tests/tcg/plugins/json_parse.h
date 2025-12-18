@@ -834,9 +834,13 @@ typedef struct {
     // Buffy log_buf; // needed by tcg logger, use VI for now
 
     ValueUnion concrete_value;
+
+    unsigned long written_time; // timestamp when this ret value is written
 } RetSetting;
 RetSetting ret_settings[MAX_ARGS];
 size_t ret_count = 0;
+
+unsigned long cur_timestamp = 0; // global timestamp for ret value writes
 
 void parse_ret_settings(const char *json);
 void parse_ret_settings(const char *json)
