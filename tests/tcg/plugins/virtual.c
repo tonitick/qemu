@@ -217,7 +217,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
         // dump arg settings for debugging
         printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
-        dump_arg_settings();
+        print_arg_settings();
         // fix all unknown pointer args to non-pointer integers
         // TODO: take care of the control flows, assume the same path for now
     }
@@ -256,7 +256,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
                     setting->value_range[1].u32 = default_int_range[1];
                     clear_all_path_logs();
                 }
-                dump_arg_settings(); // for debug
+                print_arg_settings(); // for debug
             }
         }
     }
@@ -541,7 +541,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
 
     //     // dump arg settings for debugging
     //     printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
-    //     dump_arg_settings();
+    //     print_arg_settings();
     //     // fix all unknown pointer args to non-pointer integers
     //     // TODO: take care of the control flows, assume the same path for now
     // }
@@ -580,7 +580,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     //                 setting->value_range[1].u32 = default_int_range[1];
     //                 clear_all_path_logs();
     //             }
-    //             dump_arg_settings(); // for debug
+    //             print_arg_settings(); // for debug
     //         }
     //     }
     // }

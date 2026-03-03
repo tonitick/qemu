@@ -289,8 +289,8 @@ void parse_arg_settings(const char *json)
 }
 
 // dump
-void dump_arg_settings(void);
-void dump_arg_settings(void)
+void print_arg_settings(void);
+void print_arg_settings(void)
 {
     puts("Parsed arguments:");
     for (size_t i = 0; i < arg_count; ++i) {
@@ -374,7 +374,7 @@ void parse_json_args(const char *filename)
 
     free(json);
 
-    dump_arg_settings();
+    print_arg_settings();
 }
 
 /* -------------------------------------------------------------------------- */

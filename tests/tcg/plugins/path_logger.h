@@ -621,6 +621,72 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         }
         fclose(f);
 
+        // dump input/output information in json
+        // input (only is_sub_semantic_input == true)
+        cJSON *ci_input_root = cJSON_CreateObject();
+        if (ci_input_root == NULL) {
+            fprintf(stderr, "Failed to create cJSON root object for calling interface\n");
+            return 0;
+        }
+        for (size_t i = 0; i < arg_count; ++i) {
+            if (!arg_settings[i].is_sub_semantic_input) continue;
+            cJSON *arg_item = arg_setting_to_call_interface_json(&arg_settings[i]);
+            if (arg_item == NULL) {
+                fprintf(stderr, "Failed to convert arg_setting to JSON for calling interface\n");
+                continue;
+            }
+            cJSON_AddItemToObject(ci_input_root, arg_settings[i].name, arg_item);
+        }
+        char sub_sem_input_filepath[256] = {0};
+        snprintf(sub_sem_input_filepath, sizeof(sub_sem_input_filepath), "%s/sub_sem_input.json", dump_dir);
+        char *ci_input_json_str = cJSON_Print(ci_input_root);
+        if (ci_input_json_str == NULL) {
+            fprintf(stderr, "Failed to print cJSON to string for calling interface\n");
+            cJSON_Delete(ci_input_root);
+            return 0;
+        }
+        FILE *ci_input_json_f = fopen(sub_sem_input_filepath, "w");
+        if (!ci_input_json_f) {
+            perror("fopen");
+            cJSON_Delete(ci_input_root);
+            return 0;
+        }
+        fprintf(ci_input_json_f, "%s\n", ci_input_json_str);
+        fclose(ci_input_json_f);
+        cJSON_free(ci_input_json_str);
+
+        // output
+        cJSON *ci_output_root = cJSON_CreateObject();
+        if (ci_output_root == NULL) {
+            fprintf(stderr, "Failed to create cJSON root object for calling interface output\n");
+            return 0;
+        }
+        for (size_t i = 0; i < ret_count; ++i) {
+            cJSON *ret_item = ret_setting_to_call_interface_json(&ret_settings[i]);
+            if (ret_item == NULL) {
+                fprintf(stderr, "Failed to convert ret_setting to JSON for calling interface\n");
+                continue;
+            }
+            cJSON_AddItemToObject(ci_output_root, ret_settings[i].name, ret_item);
+        }
+        char sub_sem_output_filepath[256] = {0};
+        snprintf(sub_sem_output_filepath, sizeof(sub_sem_output_filepath), "%s/sub_sem_output.json", dump_dir);
+        char *ci_output_json_str = cJSON_Print(ci_output_root);
+        if (ci_output_json_str == NULL) {
+            fprintf(stderr, "Failed to print cJSON to string for calling interface output\n");
+            cJSON_Delete(ci_output_root);
+            return 0;
+        }
+        FILE *ci_output_json_f = fopen(sub_sem_output_filepath, "w");
+        if (!ci_output_json_f) {
+            perror("fopen");
+            cJSON_Delete(ci_output_root);
+            return 0;
+        }
+        fprintf(ci_output_json_f, "%s\n", ci_output_json_str);
+        fclose(ci_output_json_f);
+        cJSON_free(ci_output_json_str);
+
         return 1; // success
     }
     return 0; // not enough logs
