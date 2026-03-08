@@ -870,10 +870,13 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
             ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
             parent_setting->is_pointer = IS_PTR_TRUE; // mark as pointer
             ArgSetting *new_setting = &arg_settings[arg_count++];
+            init_arg_setting(new_setting);
             snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
             new_setting->location_type = TYPE_ADDR;
             new_setting->addr = vaddr;
             new_setting->sz = sz_bytes;
+            strncpy(new_setting->base_ptr_var_name, parent_setting->name, sizeof(new_setting->base_ptr_var_name) - 1);
+            new_setting->base_ptr_offset = offset;
             // new_setting->vtype = TYPE_FLOAT;
             if (sz_bytes == 4) {
                 new_setting->vtype = TYPE_UINT32; // treat as (unknown) pointer first
@@ -931,12 +934,14 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                             exit(EXIT_FAILURE);
                         }
                         ArgSetting *new_setting = &arg_settings[arg_count++];
+                        init_arg_setting(new_setting);
                         int offset = vaddr - stack_ptr;
                         snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
                         new_setting->location_type = TYPE_ADDR;
                         new_setting->addr = vaddr;
                         new_setting->sz = sz_bytes;
-                        // new_setting->vtype = TYPE_FLOAT;
+                        strncpy(new_setting->base_ptr_var_name, "sp", sizeof(new_setting->base_ptr_var_name) - 1);
+                        new_setting->base_ptr_offset = offset;
                         if (sz_bytes == 4) {
                             new_setting->vtype = TYPE_FLOAT; // heuristic: all 4 bytes stack vars are floats
                             new_setting->is_pointer = IS_PTR_FALSE;
@@ -1075,10 +1080,13 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             ArgSetting *parent_setting = &arg_settings[parent_arg_setting_idx];
             parent_setting->is_pointer = IS_PTR_TRUE; // mark as pointer
             ArgSetting *new_setting = &arg_settings[arg_count++];
+            init_arg_setting(new_setting);
             snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
             new_setting->location_type = TYPE_ADDR;
             new_setting->addr = vaddr;
             new_setting->sz = sz_bytes;
+            strncpy(new_setting->base_ptr_var_name, parent_setting->name, sizeof(new_setting->base_ptr_var_name) - 1);
+            new_setting->base_ptr_offset = offset;
             // new_setting->vtype = TYPE_FLOAT;
             if (sz_bytes == 4) {
                 new_setting->vtype = TYPE_FLOAT;

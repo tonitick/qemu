@@ -89,8 +89,7 @@ typedef union {
 typedef struct {
     char name[MAX_NAME];
 
-    /* Exactly one of the two will be set */
-    ValueLocationType location_type; /* register or addr */
+    ValueLocationType location_type; /* register or addr, exactly one of the two will be set */
     char reg[MAX_REG];
     unsigned long addr;
     size_t sz; // size in bytes
@@ -104,18 +103,40 @@ typedef struct {
     int non_ptr_iters; /* iterator for non-pointer values */
 
     ValueUnion concrete_value; /* for logging concrete input for paths */
+    // for mem var calling interface
+    char base_ptr_var_name[MAX_NAME]; // empty string if no parent pointer variable (struct var) for this mem arg
+    int base_ptr_offset;
 
     // for mem arg analysis for sub-semantics recovery
     bool is_written;
     bool is_read;
     bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
-
-    // // for mem var calling interface
-    // char bas_ptr_name[MAX_NAME];
-    // int offset;
+    int defined_stage; /* stage the input variable is defined, used for sub-semantics recovery to track the reaching definition, set to 0 for non-sub-semantic mode */
+                       /* -1 indicates the input for the function */
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
+
+void init_arg_setting(ArgSetting *setting);
+void init_arg_setting(ArgSetting *setting) {
+    setting->location_type = TYPE_UNKNOWN;
+    setting->reg[0] = '\0';
+    setting->addr = 0;
+    setting->sz = 0;
+    setting->is_pointer = IS_PTR_UNKNOWN;
+    setting->vtype = TYPE_UNKNOWN;
+    setting->value_count = 0;
+    setting->non_ptr_iters = 0;
+    setting->concrete_value.u64 = 0;
+
+    setting->base_ptr_var_name[0] = '\0';
+    setting->base_ptr_offset = 0;
+
+    setting->is_written = false;
+    setting->is_read = false;
+    setting->is_sub_semantic_input = false;
+    setting->defined_stage = -1;
+}
 
 int find_ptr_arg_by_addr(unsigned long addr, size_t sz); // return the index in arg_settings, or -1 if not found
 int find_ptr_arg_by_addr(unsigned long addr, size_t sz) {
@@ -152,7 +173,7 @@ void parse_arg_settings(const char *json)
     size_t idx = 0;
     for (cJSON *arg = root->child; arg && idx < MAX_ARGS; arg = arg->next, ++idx) {
         ArgSetting *s = &arg_settings[idx];
-        memset(s, 0, sizeof(*s));
+        init_arg_setting(s);
         strncpy(s->name, arg->string, MAX_NAME - 1);
 
         /* reg or addr (mutually exclusive) */
@@ -280,12 +301,13 @@ void parse_arg_settings(const char *json)
     cJSON_Delete(root);
     arg_count = idx;  /* store the count in a global variable */
 
-    // init sub-semantic fields to false
-    for (size_t i = 0; i < arg_count; i++) {
-        arg_settings[i].is_written = false;
-        arg_settings[i].is_read = false;
-        arg_settings[i].is_sub_semantic_input = false;
-    }
+    // // init sub-semantic fields to false
+    // for (size_t i = 0; i < arg_count; i++) {
+    //     arg_settings[i].is_written = false;
+    //     arg_settings[i].is_read = false;
+    //     arg_settings[i].is_sub_semantic_input = false;
+    //     arg_settings[i].defined_stage = -1;
+    // }
 }
 
 // dump
@@ -358,6 +380,8 @@ void print_arg_settings(void)
         }
         printf("]\n");
     }
+
+    // upto value_count
 }
 
 // export
@@ -477,6 +501,8 @@ cJSON* arg_setting_to_json(const ArgSetting* arg) {
         cJSON_AddItemToArray(range_array, range_item); // Ownership transferred
     }
 
+    // non_ptr_iters is skipped, only used for type refinement during fuzzing
+
     // Handle concrete_value
     cJSON *concrete_val = create_json_from_value_union(&arg->concrete_value, arg->vtype);
     if (concrete_val == NULL) {
@@ -484,7 +510,17 @@ cJSON* arg_setting_to_json(const ArgSetting* arg) {
     }
     cJSON_AddItemToObject(json_obj, "concrete_value", concrete_val); // Ownership transferred
 
-    // non_ptr_iters is skipped as requested
+    // Handle base_ptr_var_name and base_ptr_offset for mem args
+    if (arg->location_type == TYPE_ADDR) {
+        if (arg->base_ptr_var_name[0] != '\0') { // non-empty base_ptr_var_name indicates there is a parent pointer variable (struct var) for this mem arg
+            if (cJSON_AddStringToObject(json_obj, "base_ptr_var_name", arg->base_ptr_var_name) == NULL) {
+                goto error;
+            }
+            if (cJSON_AddNumberToObject(json_obj, "base_ptr_offset", arg->base_ptr_offset) == NULL) {
+                goto error;
+            }
+        }
+    }
 
     return json_obj;
 
@@ -533,29 +569,21 @@ cJSON* arg_setting_to_call_interface_json(const ArgSetting* arg) {
         goto error;
     }
 
-    // // Handle value_range
-    // cJSON *range_array = cJSON_CreateArray();
-    // if (range_array == NULL) {
-    //     goto error;
-    // }
-    // cJSON_AddItemToObject(json_obj, "value_range", range_array); // Ownership transferred
+    // skip value_range and concrete_value, not needed for calling interface
 
-    // for (size_t i = 0; i < arg->value_count; i++) {
-    //     cJSON *range_item = create_json_from_value_union(&arg->value_range[i], arg->vtype);
-    //     if (range_item == NULL) {
-    //         goto error;
-    //     }
-    //     cJSON_AddItemToArray(range_array, range_item); // Ownership transferred
-    // }
+    // non_ptr_iters is skipped, only used for type refinement during fuzzing
 
-    // // Handle concrete_value
-    // cJSON *concrete_val = create_json_from_value_union(&arg->concrete_value, arg->vtype);
-    // if (concrete_val == NULL) {
-    //     goto error;
-    // }
-    // cJSON_AddItemToObject(json_obj, "concrete_value", concrete_val); // Ownership transferred
-
-    // non_ptr_iters is skipped as requested
+    // Handle base_ptr_var_name and base_ptr_offset for mem args
+    if (arg->location_type == TYPE_ADDR) {
+        if (arg->base_ptr_var_name[0] != '\0') { // non-empty base_ptr_var_name indicates there is a parent pointer variable (struct var) for this mem arg
+            if (cJSON_AddStringToObject(json_obj, "base_ptr_var_name", arg->base_ptr_var_name) == NULL) {
+                goto error;
+            }
+            if (cJSON_AddNumberToObject(json_obj, "base_ptr_offset", arg->base_ptr_offset) == NULL) {
+                goto error;
+            }
+        }
+    }
 
     return json_obj;
 
@@ -590,7 +618,7 @@ void parse_func_start_arg_settings(const char *json)
     size_t idx = 0;
     for (cJSON *arg = root->child; arg && idx < MAX_ARGS; arg = arg->next, ++idx) {
         ArgSetting *s = &func_start_arg_settings[idx];
-        memset(s, 0, sizeof(*s));
+        init_arg_setting(s);
         strncpy(s->name, arg->string, MAX_NAME - 1);
 
         /* reg or addr (mutually exclusive) */
@@ -718,12 +746,13 @@ void parse_func_start_arg_settings(const char *json)
     cJSON_Delete(root);
     func_start_arg_count = idx;  /* store the count in a global variable */
 
-    // init sub-semantic fields to false
-    for (size_t i = 0; i < func_start_arg_count; i++) {
-        func_start_arg_settings[i].is_written = false;
-        func_start_arg_settings[i].is_read = false;
-        func_start_arg_settings[i].is_sub_semantic_input = false;
-    }
+    // // init sub-semantic fields to false
+    // for (size_t i = 0; i < func_start_arg_count; i++) {
+    //     func_start_arg_settings[i].is_written = false;
+    //     func_start_arg_settings[i].is_read = false;
+    //     func_start_arg_settings[i].is_sub_semantic_input = false;
+    //     func_start_arg_settings[i].defined_stage = -1;
+    // }
 }
 
 // dump
@@ -840,6 +869,17 @@ typedef struct {
 RetSetting ret_settings[MAX_ARGS];
 size_t ret_count = 0;
 
+void init_ret_setting(RetSetting *s);
+void init_ret_setting(RetSetting *s) {
+    s->location_type = TYPE_REG; // default to reg, can be overwritten by JSON
+    s->reg[0] = '\0';
+    s->addr = 0;
+    s->sz = 0;
+    s->vtype = TYPE_UNKNOWN;
+    s->concrete_value.u64 = 0;
+    s->written_time = 0;
+}
+
 unsigned long cur_timestamp = 0; // global timestamp for ret value writes
 
 void parse_ret_settings(const char *json);
@@ -855,7 +895,7 @@ void parse_ret_settings(const char *json)
     size_t idx = 0;
     for (cJSON *arg = root->child; arg && idx < MAX_ARGS; arg = arg->next, ++idx) {
         RetSetting *s = &ret_settings[idx];
-        memset(s, 0, sizeof(*s));
+        init_ret_setting(s);
         strncpy(s->name, arg->string, MAX_NAME - 1);
 
         // /* xaddr */
