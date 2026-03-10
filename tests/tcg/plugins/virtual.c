@@ -855,6 +855,11 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
         }
         int parent_allocated_struct_idx = find_parent_struct_by_addr(vaddr, sz_bytes);
         if (parent_allocated_struct_idx >= 0) { // struct variable
+            /*
+              Heuristic:
+                for e2e analysis, treat all struct variables as input variables first, and create arg settings for them
+                fine grained analysis will be done for sub-semantic analysis
+            */
             assert(parent_allocated_struct_idx < allocated_struct_count);
             unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
             printf("[MEMCB update_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
@@ -917,8 +922,14 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
             // printf("[MEMCB update_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
             qemu_plugin_vcpu_exit_tb_now();
             // return;
-        } else {
-            // check stack variables
+        } else { // stack variables
+            /*
+              Heuristic:
+                1. Do read before write checking for stack variables to determine whether it's an input variable or not, using global stack_vars_write
+                   TODO: r/w pattern could be disrupted by different execution paths
+                2. Treat all stack variables as float
+                   TODO: this is for the simplicity of soft-fp firmware handling
+            */
             if (within_stack_bounds(vaddr, sz_bytes)) {
                 printf("[MEMCB update_addr_var_mem_cb] Address 0x%lx is within stack bounds, creating new stack variable arg setting\n", vaddr);
                 if (is_store) { // write to stack var, add to stack_vars_write
@@ -1012,7 +1023,7 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                 setting->value_range[0].f = default_float_range[0];
                 setting->value_range[1].f = default_float_range[1];
                 /***********************************************************************************************
-                     note:
+                    note:
                     Memory callbacks are called after a successful load or store
                     according to https://qemu.readthedocs.io/en/v9.0.4/devel/tcg-plugins.html
                     we cannot update the memory value here, should discard the results for the current iteration
@@ -1067,6 +1078,11 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
         }
         int parent_allocated_struct_idx = find_parent_struct_by_addr(vaddr, sz_bytes);
         if (parent_allocated_struct_idx >= 0) { // struct var
+            /*
+              Heuristic:
+                for e2e analysis, treat all struct variables as input variables first, and create arg settings for them
+                fine grained analysis will be done for sub-semantic analysis
+            */
             assert(parent_allocated_struct_idx < allocated_struct_count);
             unsigned long parent_allocated_addr = allocated_structs[parent_allocated_struct_idx]->loc.addr;
             printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
@@ -1121,8 +1137,67 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             // printf("[MEMCB update_float_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
             qemu_plugin_vcpu_exit_tb_now();
             // return;
-        } else {
-            // check stack variable
+        } else { // stack variables
+            /*
+              Heuristic:
+                1. Do read before write checking for stack variables to determine whether it's an input variable or not, using global stack_vars_write
+                   TODO: r/w pattern could be disrupted by different execution paths
+                2. Only handle 4/8 byte stack variables, and treat all of them as float/double
+            */
+            if (within_stack_bounds(vaddr, sz_bytes)) {
+                printf("[MEMCB update_float_addr_var_mem_cb] Address 0x%lx is within stack bounds, creating new float stack variable arg setting\n", vaddr);
+                if (is_store) { // write to stack var, add to stack_vars_write
+                    StackVar *v = &stack_vars_write[stack_var_write_count++];
+                    v->addr = vaddr;
+                    v->sz = sz_bytes;
+                }
+                else { // read from stack var
+                    if (!is_stack_var_write(vaddr, sz_bytes)) { // read before write, mark as input
+                        printf("[MEMCB update_float_addr_var_mem_cb] Address 0x%lx has prior write in this function, creating new float stack variable arg setting\n", vaddr);
+                        // create new arg setting
+                        if (arg_count >= MAX_ARGS) {
+                            fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
+                            exit(EXIT_FAILURE);
+                        }
+                        ArgSetting *new_setting = &arg_settings[arg_count++];
+                        init_arg_setting(new_setting);
+                        int offset = vaddr - stack_ptr;
+                        // snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
+                        snprintf(new_setting->name, sizeof(new_setting->name), "arg_%zu", arg_count); // just use arg_idx as name for simplicity
+                        new_setting->location_type = TYPE_ADDR;
+                        new_setting->addr = vaddr;
+                        new_setting->sz = sz_bytes;
+                        strncpy(new_setting->base_ptr_var_name, "sp", sizeof(new_setting->base_ptr_var_name) - 1);
+                        new_setting->base_ptr_offset = offset;
+                        if (sz_bytes == 4) {
+                            new_setting->vtype = TYPE_FLOAT; // heuristic: all 4 bytes stack vars are floats
+                            new_setting->is_pointer = IS_PTR_FALSE;
+                            new_setting->value_count = 2;
+                            new_setting->value_range[0].f = default_float_range[0];
+                            new_setting->value_range[1].f = default_float_range[1];
+                        } else if (sz_bytes == 8) {
+                            new_setting->vtype = TYPE_DOUBLE; // heuristic: all 8 bytes stack vars are doubles
+                            new_setting->is_pointer = IS_PTR_FALSE;
+                            new_setting->value_count = 2;
+                            new_setting->value_range[0].d = default_double_range[0];
+                            new_setting->value_range[1].d = default_double_range[1];
+                        } else {
+                            fprintf(stderr, "Unsupported size %u bytes for new float stack variable arg setting at address 0x%lx\n", sz_bytes, vaddr);
+                            exit(EXIT_FAILURE);
+                        }
+                        printf("[MEMCB update_float_addr_var_mem_cb] logging invalidated: created new float stack variable arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+                        is_logging_valid = false;
+                        // set pc back to function start
+                        ValueUnion func_start_pc;
+                        func_start_pc.u32 = func_start;
+                        qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+                        // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+                        // printf("[MEMCB update_float_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+                        qemu_plugin_vcpu_exit_tb_now();
+                        // return;
+                    }
+                }
+            }
         }
     }
     // }
