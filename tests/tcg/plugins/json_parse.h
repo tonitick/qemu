@@ -45,9 +45,9 @@ char *read_file_to_buf(const char *path)
 // Basic args structs
 // ===============================================================================================================================
 
-#define MAX_NAME  32
-#define MAX_REG    8
-#define MAX_ARGS  100          /* maximum distinct argument objects */
+#define MAX_NAME    32  // maximum length for argument name, register name, etc. 
+#define MAX_REG      8  // maximum length for register name (e.g., "eax", "xmm0", etc.)
+#define MAX_ARGS  1000 // maximum distinct argument objects
 
 
 typedef enum {
@@ -111,8 +111,9 @@ typedef struct {
     bool is_written;
     bool is_read;
     bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
-    int defined_stage; /* stage the input variable is defined, used for sub-semantics recovery to track the reaching definition, set to 0 for non-sub-semantic mode */
+    int defined_stage; /* stage the reaching defintion comes from, used for sub-semantics recovery to track the reaching definition, set to -1 for non-sub-semantic mode */
                        /* -1 indicates the input for the function */
+                       /* -2 indicates not reach def not found */
 } ArgSetting;
 ArgSetting arg_settings[MAX_ARGS];
 size_t arg_count = 0;
@@ -865,6 +866,9 @@ typedef struct {
     ValueUnion concrete_value;
 
     unsigned long written_time; // timestamp when this ret value is written
+
+    int defined_stage; /* stage the variable is defined, used for sub-semantics recovery to track the reaching definition, set to -1 for non-sub-semantic mode */
+                       /* -1 indicates function input */
 } RetSetting;
 RetSetting ret_settings[MAX_ARGS];
 size_t ret_count = 0;
@@ -878,6 +882,7 @@ void init_ret_setting(RetSetting *s) {
     s->vtype = TYPE_UNKNOWN;
     s->concrete_value.u64 = 0;
     s->written_time = 0;
+    s->defined_stage = -1;
 }
 
 unsigned long cur_timestamp = 0; // global timestamp for ret value writes

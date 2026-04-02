@@ -423,7 +423,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     }
 }
 
-// set args at func start to trigger specific execution paths
+// set args at func start to trigger specific execution paths, used for sub-semantics recovery to set specific args for different sub-semantics
 static void setargs(unsigned int cpu_index, void *udata) {
     uint64_t pc = *(uint64_t *)udata;
     printf("[VI setargs] Current PC: 0x%08lx\n", pc);
@@ -519,7 +519,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
         cur_timestamp = 0;
     }
     else if (sub_semantic_cur_iteration == 1) {
-        // clear sub_semantic logs, mem callbacks may change the setting in the first iteration
+        // clear sub_semantic logs, mem callbacks may change the setting in the first iteration (sub_semantic_cur_iteration == 0)
         clear_all_sub_semantic_logs();
     }
     else {
@@ -614,7 +614,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
             } else {
                 // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for float type in setting '%s'\n", setting->name);
                 // exit(EXIT_FAILURE);
-                // default to [0.5, 5.0]
+                // default to [0.5, 5.0] for imtermedate flaot input vars
                 setting->value_count = 2;
                 setting->value_range[0].f = default_float_range[0];
                 setting->value_range[1].f = default_float_range[1];
@@ -630,8 +630,13 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
                 value.d = get_random_double(setting->value_range[0].d, setting->value_range[1].d);
                 printf("[VI randargs_sub_semantics] generated double value %g for setting '%s'\n", value.d, setting->name);
             } else {
-                fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for double type in setting '%s'\n", setting->name);
-                exit(EXIT_FAILURE);
+                // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for double type in setting '%s'\n", setting->name);
+                // exit(EXIT_FAILURE);
+                // default to [0.5, 5.0] for imtermedate double input vars
+                setting->value_count = 2;
+                setting->value_range[0].d = default_float_range[0];
+                setting->value_range[1].d = default_float_range[1];
+                value.d = get_random_double(setting->value_range[0].d, setting->value_range[1].d);
             }
         } else if (setting->vtype == TYPE_UINT32) {
             if (setting->value_count == 1) {
@@ -657,8 +662,12 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
                 value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
             }
             else {
-                fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint8/16 type in setting '%s'\n", setting->name);
-                exit(EXIT_FAILURE);
+                // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint8/16 type in setting '%s'\n", setting->name);
+                // exit(EXIT_FAILURE);
+
+                // heuristic: integer inputs are mostly related to control flows or pointers, keep the same value
+                // FIXME: not sure if this will cause some issues
+                continue;
             }
         } else {
             fprintf(stderr, "[VI randargs_sub_semantics] Unsupported value type in setting '%s'\n", setting->name);
@@ -877,7 +886,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
             ArgSetting *new_setting = &arg_settings[arg_count++];
             init_arg_setting(new_setting);
             // snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
-            snprintf(new_setting->name, sizeof(new_setting->name), "arg_%zu", arg_count); // just use arg_idx as name for simplicity
+            snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
             new_setting->location_type = TYPE_ADDR;
             new_setting->addr = vaddr;
             new_setting->sz = sz_bytes;
@@ -949,7 +958,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                         init_arg_setting(new_setting);
                         int offset = vaddr - stack_ptr;
                         // snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
-                        snprintf(new_setting->name, sizeof(new_setting->name), "arg_%zu", arg_count); // just use arg_idx as name for simplicity
+                        snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
                         new_setting->location_type = TYPE_ADDR;
                         new_setting->addr = vaddr;
                         new_setting->sz = sz_bytes;
@@ -1100,7 +1109,7 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             ArgSetting *new_setting = &arg_settings[arg_count++];
             init_arg_setting(new_setting);
             // snprintf(new_setting->name, sizeof(new_setting->name), "%s_off_%zu", parent_setting->name, offset);
-            snprintf(new_setting->name, sizeof(new_setting->name), "arg_%zu", arg_count); // just use arg_idx as name for simplicity
+            snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
             new_setting->location_type = TYPE_ADDR;
             new_setting->addr = vaddr;
             new_setting->sz = sz_bytes;
@@ -1163,7 +1172,7 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                         init_arg_setting(new_setting);
                         int offset = vaddr - stack_ptr;
                         // snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
-                        snprintf(new_setting->name, sizeof(new_setting->name), "arg_%zu", arg_count); // just use arg_idx as name for simplicity
+                        snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
                         new_setting->location_type = TYPE_ADDR;
                         new_setting->addr = vaddr;
                         new_setting->sz = sz_bytes;
@@ -1200,7 +1209,6 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             }
         }
     }
-    // }
 }
 
 static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
