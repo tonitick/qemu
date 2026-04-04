@@ -12,6 +12,9 @@
 #include <errno.h>
 #include "uthash.h"
 #include "variable.h"
+#include "json_util.h"
+
+#define NON_PTR_ITER_MAX 50
 
 // ===============================================================================================================================
 // End-to-end recovery, with path identification

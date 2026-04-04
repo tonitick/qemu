@@ -2,6 +2,7 @@
 #define VIRTUAL_H
 
 #include <qemu-plugin.h>
+#include "json_util.h"
 #include "path_logger.h"
 
 // ---------------------------------------------------------------
@@ -763,6 +764,60 @@ void parse_rules_file(const char *filename) {
     }
 
     fclose(f);
+}
+
+// ---------------------------------------------------------------
+// variable json file parsing
+// ---------------------------------------------------------------
+// input
+void parse_json_args(const char *filename);
+void parse_json_args(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_arg_settings_from_json(json, arg_settings, &arg_count);
+
+    free(json);
+
+    print_arg_settings(arg_settings, &arg_count);
+}
+
+// output
+void parse_json_outs(const char *filename);
+void parse_json_outs(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_ret_settings(json);
+
+    free(json);
+
+    print_ret_settings(ret_settings, ret_count);
+}
+
+// function start args for sub semantics
+void parse_func_start_json_args(const char *filename);
+void parse_func_start_json_args(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_arg_settings_from_json(json, func_start_arg_settings, &func_start_arg_count);
+
+    free(json);
+
+    print_arg_settings(func_start_arg_settings, &func_start_arg_count);
 }
 
 #endif // VIRTUAL_H

@@ -18,8 +18,9 @@ int isdigit(int c);
 #include <ctype.h>
 
 #include "virtual.h"
-#include "variable.h"
-#include "path_logger.h"
+// #include "variable.h"
+// #include "json_util.h"
+// #include "path_logger.h"
 #include "capstone_util.h"
 #include "struct_recovery.h"
 #include "logger.h"
@@ -775,7 +776,7 @@ static void logrets_sub_semantics(unsigned int cpu_index, void *udata) {
     // This function is called when the magic instruction is executed
     // It will dump the latest return values to the log buffer
     printf("[VI logrets_sub_semantics] logrets_sub_semantics called, dumping latest return values.\n");
-    dump_ret_settings();
+    print_ret_settings(ret_settings, ret_count);
     for (size_t i = 0; i < ret_count; i++) {
         RetSetting *setting = &ret_settings[i];
         ValueUnion value;
@@ -874,7 +875,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
             printf("[MEMCB update_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
             // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
             size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
-            int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
+            int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size, arg_settings, &arg_count);
             assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
             struct NestedStruct *parent_struct = allocated_structs[parent_allocated_struct_idx];
             parent_struct->is_pointer = IS_PTR_TRUE; // mark as pointer
@@ -1097,7 +1098,7 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             printf("[MEMCB update_float_addr_var_mem_cb] Found parent struct allocated at address 0x%lx\n", parent_allocated_addr);
             // assert(allocated_structs[parent_allocated_struct_idx]->is_pointer);
             size_t parent_ptr_size = allocated_structs[parent_allocated_struct_idx]->size;
-            int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size);
+            int parent_arg_setting_idx = find_ptr_arg_by_addr(parent_allocated_addr, parent_ptr_size, arg_settings, &arg_count);
             assert(parent_arg_setting_idx >= 0 && parent_arg_setting_idx < arg_count);
             struct NestedStruct *parent_struct = allocated_structs[parent_allocated_struct_idx];
             parent_struct->is_pointer = IS_PTR_TRUE; // mark as pointer
