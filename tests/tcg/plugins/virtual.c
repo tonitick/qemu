@@ -18,7 +18,7 @@ int isdigit(int c);
 #include <ctype.h>
 
 #include "virtual.h"
-#include "json_parse.h"
+#include "variable.h"
 #include "path_logger.h"
 #include "capstone_util.h"
 #include "struct_recovery.h"
@@ -217,7 +217,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
         // dump arg settings for debugging
         printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
-        print_arg_settings();
+        print_arg_settings(arg_settings, &arg_count);
         // fix all unknown pointer args to non-pointer integers
         // TODO: take care of the control flows, assume the same path for now
     }
@@ -256,7 +256,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
                     setting->value_range[1].u32 = default_int_range[1];
                     clear_all_path_logs();
                 }
-                print_arg_settings(); // for debug
+                print_arg_settings(arg_settings, &arg_count); // for debug
             }
         }
     }

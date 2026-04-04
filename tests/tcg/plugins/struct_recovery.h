@@ -1,7 +1,7 @@
 #ifndef STRUCT_RECOVERY_H
 #define STRUCT_RECOVERY_H
 
-#include "json_parse.h"
+#include "variable.h"
 
 // ===============================================================================================================================
 // Heap vars
