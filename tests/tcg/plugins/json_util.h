@@ -353,8 +353,8 @@ error:
 // output variable
 // ===============================================================================================================================
 // parse output variable from json to rsettings & rcount
-void parse_ret_settings(const char *json);
-void parse_ret_settings(const char *json)
+void parse_ret_settings_from_json(const char *json, RetSetting *rsettings, size_t *rcount);
+void parse_ret_settings_from_json(const char *json, RetSetting *rsettings, size_t *rcount)
 {
     cJSON *root = cJSON_Parse(json);
     if (!root || !cJSON_IsObject(root)) {
@@ -365,7 +365,7 @@ void parse_ret_settings(const char *json)
 
     size_t idx = 0;
     for (cJSON *arg = root->child; arg && idx < MAX_ARGS; arg = arg->next, ++idx) {
-        RetSetting *s = &ret_settings[idx];
+        RetSetting *s = &rsettings[idx];
         init_ret_setting(s);
         strncpy(s->name, arg->string, MAX_NAME - 1);
 
@@ -427,7 +427,7 @@ void parse_ret_settings(const char *json)
     }
 
     cJSON_Delete(root);
-    ret_count = idx;  /* store the count in a global variable */
+    *rcount = idx;
 }
 
 // a single RetSetting to cJSON entry

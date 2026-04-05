@@ -767,9 +767,22 @@ void parse_rules_file(const char *filename) {
 }
 
 // ---------------------------------------------------------------
-// variable json file parsing
+// variable & json file parsing
 // ---------------------------------------------------------------
-// input
+// // input globals
+// ArgSetting arg_settings[MAX_ARGS];
+// size_t arg_count = 0;
+
+// // output globals
+// RetSetting ret_settings[MAX_ARGS];
+// size_t ret_count = 0;
+// unsigned long cur_timestamp = 0; // global timestamp for ret value writes
+
+// // function start args (for sub semantics) globals
+// ArgSetting func_start_arg_settings[MAX_ARGS];
+// size_t func_start_arg_count = 0;
+
+// input parsing
 void parse_json_args(const char *filename);
 void parse_json_args(const char *filename)
 {
@@ -786,7 +799,7 @@ void parse_json_args(const char *filename)
     print_arg_settings(arg_settings, &arg_count);
 }
 
-// output
+// output parsing
 void parse_json_outs(const char *filename);
 void parse_json_outs(const char *filename)
 {
@@ -796,14 +809,14 @@ void parse_json_outs(const char *filename)
         return;
     }
 
-    parse_ret_settings(json);
+    parse_ret_settings_from_json(json, ret_settings, &ret_count);
 
     free(json);
 
     print_ret_settings(ret_settings, ret_count);
 }
 
-// function start args for sub semantics
+// function start args parsing (for sub semantics)
 void parse_func_start_json_args(const char *filename);
 void parse_func_start_json_args(const char *filename)
 {

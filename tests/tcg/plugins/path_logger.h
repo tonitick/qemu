@@ -17,15 +17,18 @@
 #define NON_PTR_ITER_MAX 50
 
 // ===============================================================================================================================
-// End-to-end recovery, with path identification
+// globals
 // ===============================================================================================================================
-
-/* ---------- current path ---------- */
+//TODO: move to virtual.h?
+// current path, current log status
 #define MAX_PATH_LENGTH 1024
 uint64_t current_path[MAX_PATH_LENGTH];
 size_t current_path_len = 0;
-// ValueUnion logged_in_values[MAX_ARGS], logged_out_values[MAX_ARGS]; // a single input-output record
 bool is_logging_valid = true;
+
+// ===============================================================================================================================
+// End-to-end recovery, with path identification
+// ===============================================================================================================================
 
 /* ---------- log buffers ---------- */
 #define MAX_PER_PATH_LOG_SIZE 100
@@ -37,33 +40,33 @@ typedef struct {
 typedef ArgValueLogs RetValueLogs;
 
 /* ---------- uthash entry ---------- */
-typedef struct Entry {
+typedef struct {
     uint64_t      *key; // trace sequence, as key buffer
     size_t         len; // length of the trace sequence, #basic_blocks_visited * sizeof(uint64_t)
     ArgValueLogs   args[MAX_ARGS]; // inputs
     RetValueLogs   rets[MAX_ARGS]; // outputs
     ValueUnion     concrete_inputs[MAX_ARGS]; // concrete inputs that trigger the path
     UT_hash_handle hh;
-} Entry;
+} PathLogEntry;
 
-Entry *g_map = NULL;
+PathLogEntry *g_map = NULL;
 
 /* ---------- helpers ---------- */
 size_t kaddrbytes(size_t n);  // convert number of addresses to bytes
 size_t kaddrbytes(size_t n) { return n * sizeof(uint64_t); }
 
-Entry *trace_find(const uint64_t *seq, size_t len); // key: uint64_t *key (seq) + size_t len
-Entry *trace_find(const uint64_t *seq, size_t len)
+PathLogEntry *trace_find(const uint64_t *seq, size_t len); // key: uint64_t *key (seq) + size_t len
+PathLogEntry *trace_find(const uint64_t *seq, size_t len)
 {
-    Entry *e = NULL;
+    PathLogEntry *e = NULL;
     HASH_FIND(hh, g_map, seq, kaddrbytes(len), e);
     return e;
 }
 
-Entry *trace_create(const uint64_t *seq, size_t len);
-Entry *trace_create(const uint64_t *seq, size_t len)
+PathLogEntry *trace_create(const uint64_t *seq, size_t len);
+PathLogEntry *trace_create(const uint64_t *seq, size_t len)
 {
-    Entry *e = (Entry *)calloc(1, sizeof *e);
+    PathLogEntry *e = (PathLogEntry *)calloc(1, sizeof *e);
     if (!e) { perror("calloc"); exit(1); }
     e->key = (uint64_t *)malloc(kaddrbytes(len));
     if (!e->key) { perror("malloc key"); exit(1); }
@@ -82,7 +85,7 @@ void record_trace_values(const uint64_t *seq, size_t len)
                                 // const ValueUnion *arg_vals,
                                 // const ValueUnion *ret_vals)
 {
-    Entry *e = trace_find(seq, len);
+    PathLogEntry *e = trace_find(seq, len);
     if (!e) e = trace_create(seq, len);
 
     // input/ouput pairs
@@ -149,13 +152,13 @@ void record_trace_values(const uint64_t *seq, size_t len)
 void clear_all_path_logs(void);
 void clear_all_path_logs(void)
 {
-    Entry *e, *tmp;
+    PathLogEntry *e, *tmp;
     HASH_ITER(hh, g_map, e, tmp) { HASH_DEL(g_map, e); free(e->key); free(e); }
 }
 
 /* ---------- Get a read-only handle to the trace series ---------- */
-const Entry *get_trace_series(const uint64_t *seq, size_t len);
-const Entry *get_trace_series(const uint64_t *seq, size_t len)
+const PathLogEntry *get_trace_series(const uint64_t *seq, size_t len);
+const PathLogEntry *get_trace_series(const uint64_t *seq, size_t len)
 {
     return trace_find(seq, len);
 }
@@ -164,7 +167,7 @@ const Entry *get_trace_series(const uint64_t *seq, size_t len)
 void dump_all_path_logs(void); // only to stdout for debugging
 void dump_all_path_logs(void)
 {
-    Entry *e, *tmp;
+    PathLogEntry *e, *tmp;
     HASH_ITER(hh, g_map, e, tmp) {
         printf("Trace len=%zu:", e->len);
         for (size_t i = 0; i < e->len; ++i)
@@ -202,7 +205,7 @@ void dump_all_path_logs(void)
 int check_path_log_size_and_dump(char* dump_dir);
 int check_path_log_size_and_dump(char* dump_dir) {
     // if all path log size reach MAX_PER_PATH_LOG_SIZE, dump the related path logs
-    Entry *e, *tmp;
+    PathLogEntry *e, *tmp;
 
     // FILE *f = fopen(dump_path, "w");
     // if (!f) {
@@ -419,7 +422,7 @@ int check_path_log_size_and_dump(char* dump_dir) {
 void dump_existing_path_logs(char* dump_dir);
 void dump_existing_path_logs(char* dump_dir) {
     // dump all existing path logs with size > MAX_PER_PATH_LOG_SIZE / 2
-    Entry *e, *tmp;
+    PathLogEntry *e, *tmp;
     int path_id = 0;
     HASH_ITER(hh, g_map, e, tmp) {
         bool need_dump = false;
