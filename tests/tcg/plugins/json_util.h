@@ -3,6 +3,7 @@
 
 #include <cjson/cJSON.h>
 #include "variable.h"
+// #include "path_logger.h"
 
 // ===============================================================================================================================
 // file read helper
@@ -203,6 +204,17 @@ cJSON* create_json_from_value_union(const ValueUnion* val, IOValueType vtype) {
 }
 
 // a sinle ArgSetting to cJSON entry
+// format:
+// {
+//     "reg": "eax", // or "addr": 0x1234
+//     "size": 4,
+//     "is_pointer": "true"/"false"/"unknown",
+//     "type": "float"/"double"/"uint32"/"uint16"/
+//     "value_range": [0.0, 1.0], // array of 1 or 2 numbers, optional
+//     "concrete_value": 0.5 // optional
+//     "base_ptr_var_name": "arg0", // optional, only for mem arg
+//     "base_ptr_offset": 8 // optional, only for mem arg with parent pointer variable
+// }
 cJSON* arg_setting_to_json(const ArgSetting* arg);
 cJSON* arg_setting_to_json(const ArgSetting* arg) {
     cJSON *json_obj = cJSON_CreateObject();
@@ -285,9 +297,58 @@ error:
     return NULL;
 }
 
-// a sinle ArgSetting to cJSON call interface entry
-// TODO: could be merge with arg_setting_to_json
-cJSON* arg_setting_to_call_interface_json(const ArgSetting* arg);
+// ArgSetting[] to json file using arg_setting_to_json
+// Return:
+//   0 on success, -1 on failure
+int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount);
+int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount) {
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        fprintf(stderr, "Failed to create cJSON root object\n");
+        return -1;
+    }
+
+    for (size_t i = 0; i < acount; ++i) {
+        cJSON *arg_item = arg_setting_to_json(&asettings[i]);
+        if (arg_item == NULL) {
+            fprintf(stderr, "Failed to convert arg_setting to JSON for arg '%s'\n", asettings[i].name);
+            cJSON_Delete(root);
+            return -1;
+        }
+        cJSON_AddItemToObject(root, asettings[i].name, arg_item);
+    }
+    char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        fprintf(stderr, "Failed to print cJSON to string\n");
+        cJSON_Delete(root);
+        return -1;
+    }
+
+    FILE *json_f = fopen(output_path, "w");
+    if (!json_f) {
+        perror("fopen");
+        cJSON_Delete(root);
+        cJSON_free(json_str);
+        return -1;
+    }
+    fprintf(json_f, "%s\n", json_str);
+    cJSON_Delete(root);
+    cJSON_free(json_str);
+    fclose(json_f);
+    return 0; // success
+}
+
+// a sinle ArgSetting to cJSON entry for calling interface, only include necessary fields for calling interface, skip value_range and concrete_value
+// format:
+// {
+//     "reg": "eax", // or "addr": 0x1234
+//     "size": 4,
+//     "is_pointer": "true"/"false"/"unknown",
+//     "type": "float"/"double"/"uint32"/"uint16"/
+//     "base_ptr_var_name": "arg0", // optional, only for mem arg
+//     "base_ptr_offset": 8 // optional, only for mem arg with parent pointer variable
+// }
+cJSON* arg_setting_to_call_interface_json(const ArgSetting* arg); // TODO: could be merge with arg_setting_to_json?
 cJSON* arg_setting_to_call_interface_json(const ArgSetting* arg) {
     cJSON *json_obj = cJSON_CreateObject();
     if (json_obj == NULL) {
@@ -347,6 +408,45 @@ error:
     // If any "Add" operation failed, delete the entire object and return NULL.
     cJSON_Delete(json_obj);
     return NULL;
+}
+
+// ArgSetting[] to json file using arg_setting_to_call_interface_json, only include necessary fields for calling interface, skip value_range and concrete_value
+// Return:
+//   0 on success, -1 on failure
+int dump_arg_settings_to_call_interface_json_file(const char *output_path, const ArgSetting *asettings, size_t acount);
+int dump_arg_settings_to_call_interface_json_file(const char *output_path, const ArgSetting *asettings, size_t acount) {
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        fprintf(stderr, "Failed to create cJSON root object\n");
+        return -1;
+    }
+
+    for (size_t i = 0; i < acount; ++i) {
+        cJSON *arg_item = arg_setting_to_call_interface_json(&asettings[i]);
+        if (arg_item == NULL) {
+            fprintf(stderr, "Failed to convert arg_setting to JSON for calling interface arg '%s'\n", asettings[i].name);
+            return -1;
+        }
+        cJSON_AddItemToObject(root, asettings[i].name, arg_item);
+    }
+    char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        fprintf(stderr, "Failed to print cJSON to string for calling interface\n");
+        cJSON_Delete(root);
+        return -1;
+    }
+    FILE *json_f = fopen(output_path, "w");
+    if (!json_f) {
+        perror("fopen");
+        cJSON_Delete(root);
+        cJSON_free(json_str);
+        return -1;
+    }
+    fprintf(json_f, "%s\n", json_str);
+    cJSON_Delete(root);
+    cJSON_free(json_str);
+    fclose(json_f);
+    return 0; // success
 }
 
 // ===============================================================================================================================
@@ -471,6 +571,49 @@ error:
     cJSON_Delete(json_obj);
     return NULL;
 }
+
+// RetSetting[] to json file using ret_setting_to_call_interface_json
+// Return:
+//   0 on success, -1 on failure
+int dump_ret_settings_to_call_interface_json_file(const char *output_path, const RetSetting *rsettings, size_t rcount);
+int dump_ret_settings_to_call_interface_json_file(const char *output_path, const RetSetting *rsettings, size_t rcount) {
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        fprintf(stderr, "Failed to create cJSON root object\n");
+        return -1;
+    }
+
+    for (size_t i = 0; i < rcount; ++i) {
+        cJSON *ret_item = ret_setting_to_call_interface_json(&rsettings[i]);
+        if (ret_item == NULL) {
+            fprintf(stderr, "Failed to convert ret_setting to JSON for calling interface ret '%s'\n", rsettings[i].name);
+            return -1;
+        }
+        cJSON_AddItemToObject(root, rsettings[i].name, ret_item);
+    }
+    char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        fprintf(stderr, "Failed to print cJSON to string for calling interface\n");
+        cJSON_Delete(root);
+        return -1;
+    }
+    FILE *json_f = fopen(output_path, "w");
+    if (!json_f) {
+        perror("fopen");
+        cJSON_Delete(root);
+        cJSON_free(json_str);
+        return -1;
+    }
+    fprintf(json_f, "%s\n", json_str);
+    cJSON_Delete(root);
+    cJSON_free(json_str);
+    fclose(json_f);
+    return 0; // success
+}
+
+// ===============================================================================================================================
+// path log file dump
+// ===============================================================================================================================
 
 
 #endif // JSON_UTIL_H

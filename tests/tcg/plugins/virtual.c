@@ -184,13 +184,13 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
     // printf("randargs - results for iteration %d:\n", cur_iteration);
     if (cur_iteration >= MAX_FUZZ_ITERATIONS) {
-        printf("[VI randargs] reached max fuzzing iterations %d, dump existing path logs andexiting\n", MAX_FUZZ_ITERATIONS);
+        printf("[VI randargs] reached max fuzzing iterations %d, dump existing path logs and exiting\n", MAX_FUZZ_ITERATIONS);
         dump_existing_path_logs(dump_path);
         exit(0);
     }
     if (check_path_log_size_and_dump(dump_path)) {
         printf("[VI randargs] log finished, dump related path logs\n");
-        // dump_all_path_logs();
+        // print_all_path_logs();
         exit(0);
     }
     if (cur_iteration == 0) {
@@ -205,8 +205,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     else if (is_logging_valid) {
         // log previous iteration values
         // if (is_logging_valid) {
-        // record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
-        record_trace_values(current_path, current_path_len);
+        record_trace_values(current_path, current_path_len, arg_settings, arg_count, ret_settings, ret_count);
         // }
         // clear
         // current_path_len = 0;
@@ -214,7 +213,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     else if (!is_logging_valid) {
         clear_all_path_logs(); // zz: log only when arg settings can stably generate valid logs
         // printf("[VI randargs] dump path log after clear:\n");
-        // dump_all_path_logs();
+        // print_all_path_logs();
 
         // dump arg settings for debugging
         printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
@@ -526,26 +525,6 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     else {
         record_sub_semantic_trace_values();
     }
-    // else if (is_logging_valid) {
-    //     // log previous iteration values
-    //     // if (is_logging_valid) {
-    //     // record_trace_values(current_path, current_path_len, logged_in_values, logged_out_values);
-    //     // record_trace_values(current_path, current_path_len);
-    //     // }
-    //     // clear
-    //     // current_path_len = 0;
-    // }
-    // else if (!is_logging_valid) {
-    //     clear_all_path_logs(); // zz: log only when arg settings can stably generate valid logs
-    //     // printf("[VI randargs] dump path log after clear:\n");
-    //     // dump_all_path_logs();
-
-    //     // dump arg settings for debugging
-    //     printf("[VI randargs] previous iteration logging invalid, fix arg settings\n");
-    //     print_arg_settings();
-    //     // fix all unknown pointer args to non-pointer integers
-    //     // TODO: take care of the control flows, assume the same path for now
-    // }
 
     // set stack pointer
     // ValueUnion sp_val;
