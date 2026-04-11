@@ -3,7 +3,7 @@
 
 #include <cjson/cJSON.h>
 #include "variable.h"
-// #include "path_logger.h"
+#include "path_logger.h"
 
 // ===============================================================================================================================
 // file read helper
@@ -300,8 +300,8 @@ error:
 // ArgSetting[] to json file using arg_setting_to_json
 // Return:
 //   0 on success, -1 on failure
-int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount);
-int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount) {
+int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount, bool float_only);
+int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount, bool float_only) {
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         fprintf(stderr, "Failed to create cJSON root object\n");
@@ -309,6 +309,9 @@ int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *as
     }
 
     for (size_t i = 0; i < acount; ++i) {
+        if (float_only && asettings[i].vtype != TYPE_FLOAT && asettings[i].vtype != TYPE_DOUBLE) {
+            continue;
+        }
         cJSON *arg_item = arg_setting_to_json(&asettings[i]);
         if (arg_item == NULL) {
             fprintf(stderr, "Failed to convert arg_setting to JSON for arg '%s'\n", asettings[i].name);
@@ -531,6 +534,91 @@ void parse_ret_settings_from_json(const char *json, RetSetting *rsettings, size_
 }
 
 // a single RetSetting to cJSON entry
+cJSON* ret_setting_to_json(const RetSetting* ret);
+cJSON* ret_setting_to_json(const RetSetting* ret) {
+    cJSON *json_obj = cJSON_CreateObject();
+    if (json_obj == NULL) {
+        return NULL;
+    }
+
+    /*
+     * The 'name' field is no longer serialized here,
+     * as it's used as the key in the parent object (e.g., "ret1").
+     */
+
+    // Handle location_type (conditional)
+    if (ret->location_type == TYPE_REG) {
+        if (cJSON_AddStringToObject(json_obj, "reg", ret->reg) == NULL) {
+            goto error;
+        }
+    } else {
+        if (cJSON_AddNumberToObject(json_obj, "addr", ret->addr) == NULL) {
+            goto error;
+        }
+    }
+
+    // Handle type
+    if (cJSON_AddStringToObject(json_obj, "type", io_value_type_to_string(ret->vtype)) == NULL) {
+        goto error;
+    }
+
+    // Handle size
+    if (cJSON_AddNumberToObject(json_obj, "size", ret->sz) == NULL) {
+        goto error;
+    }
+
+    return json_obj;
+
+error:
+    // If any "Add" operation failed, delete the entire object and return NULL.
+    cJSON_Delete(json_obj);
+    return NULL;
+}
+
+// RetSetting[] to json file using ret_setting_to_json
+// Return:
+//   0 on success, -1 on failure
+int dump_ret_settings_to_json_file(const char *output_path, const RetSetting *rsettings, size_t rcount, bool float_only);
+int dump_ret_settings_to_json_file(const char *output_path, const RetSetting *rsettings, size_t rcount, bool float_only) {
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        fprintf(stderr, "Failed to create cJSON root object\n");
+        return -1;
+    }
+
+    for (size_t i = 0; i < rcount; ++i) {
+        if (float_only && rsettings[i].vtype != TYPE_FLOAT && rsettings[i].vtype != TYPE_DOUBLE) {
+            continue;
+        }
+        cJSON *ret_item = ret_setting_to_json(&rsettings[i]);
+        if (ret_item == NULL) {
+            fprintf(stderr, "Failed to convert ret_setting to JSON for calling interface ret '%s'\n", rsettings[i].name);
+            return -1;
+        }
+        cJSON_AddItemToObject(root, rsettings[i].name, ret_item);
+    }
+    char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        fprintf(stderr, "Failed to print cJSON to string for calling interface\n");
+        cJSON_Delete(root);
+        return -1;
+    }
+    FILE *json_f = fopen(output_path, "w");
+    if (!json_f) {
+        perror("fopen");
+        cJSON_Delete(root);
+        cJSON_free(json_str);
+        return -1;
+    }
+    fprintf(json_f, "%s\n", json_str);
+    cJSON_Delete(root);
+    cJSON_free(json_str);
+    fclose(json_f);
+    return 0; // success
+}
+
+
+// a single RetSetting to cJSON entry
 cJSON* ret_setting_to_call_interface_json(const RetSetting* ret);
 cJSON* ret_setting_to_call_interface_json(const RetSetting* ret) {
     cJSON *json_obj = cJSON_CreateObject();
@@ -612,8 +700,221 @@ int dump_ret_settings_to_call_interface_json_file(const char *output_path, const
 }
 
 // ===============================================================================================================================
+// reaching var definitions file dump
+// ===============================================================================================================================
+// dump the reaching variable definitions to a json file
+// format:
+// [
+//     [
+//         "x_s3_0",
+//         "y_s2_0"
+//     ],
+//     [
+//         "x_s3_1",
+//         "y_s0_3"
+//     ],
+//     [
+//         "x_s3_2",
+//         "y_s0_4"
+//     ],
+//     [
+//         "x_s3_3",
+//         "y_s0_6"
+//     ],
+//     [
+//         "x_s3_4",
+//         "y_s0_7"
+//     ]
+// ]
+// input:
+//   defs: the array of variable definitions (ArgSetting) for the reaching definitions
+//   inputs: the array of input variable settings (ArgSetting) for the path log entry
+//   match_def_indices: the array of indices in defs that correspond to the reaching definitions for the input variables
+//   match_input_indices: the array of indices in inputs that correspond to the input variables that use the reaching definitions
+//   count: the count of reaching definition - input variable pairs to dump
+// return:
+//   0 on success, -1 on failure
+int dump_reaching_var_defs_to_json_file(const char *output_path, ArgSetting* defs, ArgSetting* inputs, int* match_def_indices, int* match_input_indices, size_t count);
+int dump_reaching_var_defs_to_json_file(const char *output_path, ArgSetting* defs, ArgSetting* inputs, int* match_def_indices, int* match_input_indices, size_t count) {
+    cJSON *root = cJSON_CreateArray();
+    if (root == NULL) {
+        fprintf(stderr, "Failed to create cJSON root array\n");
+        return -1;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        cJSON *pair = cJSON_CreateArray();
+        if (pair == NULL) {
+            fprintf(stderr, "Failed to create cJSON pair array\n");
+            cJSON_Delete(root);
+            return -1;
+        }
+        cJSON_AddItemToArray(pair, cJSON_CreateString(inputs[match_input_indices[i]].name));
+        cJSON_AddItemToArray(pair, cJSON_CreateString(defs[match_def_indices[i]].name));
+        cJSON_AddItemToArray(root, pair);
+    }
+
+    char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        fprintf(stderr, "Failed to print cJSON to string\n");
+        cJSON_Delete(root);
+        return -1;
+    }
+    FILE *json_f = fopen(output_path, "w");
+    if (!json_f) {
+        perror("fopen");
+        cJSON_Delete(root);
+        cJSON_free(json_str);
+        return -1;
+    }
+    fprintf(json_f, "%s\n", json_str);
+    cJSON_Delete(root);
+    cJSON_free(json_str);
+    fclose(json_f);
+
+    return 0; // success
+}
+
+// ===============================================================================================================================
 // path log file dump
 // ===============================================================================================================================
+// dump the io pairs in a path log entry to a txt file
+// input:
+//   e: the path log entry containing the io pairs to dump
+//   output_path: the output txt file path
+//   asettings & acount: the arg settings and count for interpreting the corresponding type of input variables in the path log
+//   rsettings & rcount: the ret settings and count for interpreting the corresponding type of output variables in the path log  
+// output file format:
+//   [IN] <arg_name>: <value1> <value2> ... <valueN>
+//   [OUT] <ret_name>: <value1> <value2> ... <valueN>
+// return: 
+//   0 on success, -1 on failure
+int dump_io_pairs_from_path_log_entry_to_txt(PathLogEntry *e, const char *output_path, const ArgSetting *asettings, size_t acount, const RetSetting *rsettings, size_t rcount);
+int dump_io_pairs_from_path_log_entry_to_txt(PathLogEntry *e, const char *output_path, const ArgSetting *asettings, size_t acount, const RetSetting *rsettings, size_t rcount) {
+    FILE *f = fopen(output_path, "w");
+    if (!f) {
+        perror("fopen");
+        // continue;
+        return -1;
+    }
 
+    // dump the entry
+    printf("Dumping path log for trace len=%zu:", e->len);
+    for (size_t i = 0; i < e->len; ++i)
+        printf(" 0x%08" PRIx64, e->key[i]);
+    putchar('\n');
+
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (arg_settings[i].vtype == TYPE_FLOAT) {
+            printf("  IN (FLOAT)  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+            fprintf(f, "[IN] %s: ", arg_settings[i].name);
+            for (size_t j = 0; j < e->args[i].count; ++j) {
+                printf("       %g\n", e->args[i].data[j].f);
+                fprintf(f, "%.10f ", e->args[i].data[j].f);
+            }
+            fprintf(f, "\n");
+        }
+        else if (arg_settings[i].vtype == TYPE_DOUBLE) {
+            printf("  IN (DOUBLE)  %-4s N=%zu\n", arg_settings[i].name, e->args[i].count);
+            fprintf(f, "[IN] %s: ", arg_settings[i].name);
+            for (size_t j = 0; j < e->args[i].count; ++j) {
+                printf("       %g\n", e->args[i].data[j].d);
+                fprintf(f, "%.10g ", e->args[i].data[j].d);
+            }
+            fprintf(f, "\n");
+        }
+    }
+
+    for (size_t i = 0; i < ret_count; ++i) {
+        if (ret_settings[i].vtype == TYPE_FLOAT) {
+            printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
+            fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+            for (size_t j = 0; j < e->rets[i].count; ++j) {
+                printf("       %g\n", e->rets[i].data[j].f);
+                fprintf(f, "%.10f ", e->rets[i].data[j].f);
+            }
+            fprintf(f, "\n");
+        }
+        else if (ret_settings[i].vtype == TYPE_DOUBLE) {
+            printf("  OUT %-4s N=%zu\n", ret_settings[i].name, e->rets[i].count);
+            fprintf(f, "[OUT] %s: ", ret_settings[i].name);
+            for (size_t j = 0; j < e->rets[i].count; ++j) {
+                printf("       %g\n", e->rets[i].data[j].d);
+                fprintf(f, "%.10g ", e->rets[i].data[j].d);
+            }
+            fprintf(f, "\n");
+        }
+    }
+    fclose(f);
+
+    return 0;
+}
+
+// dump the io pairs in sum-semantic logs to a txt file
+// input:
+//   arglogs & retlogs: the sub-semantic ArgValueLogs[] and RetValueLogs[] contanining the io pairs to dump
+//   asettings & acount: the arg settings and count for interpreting the corresponding type of input variables in arglogs
+//   rsettings & rcount: the ret settings and count for interpreting the corresponding type of output variables in retlogs
+//   output_path: the output txt file path
+// output file format:
+//   [IN] <arg_name>: <value1> <value2> ... <valueN>
+//   [OUT written_time] <ret_name>: <value1> <value2> ... <valueN>
+void dump_io_pairs_from_sub_semantic_log_to_txt(ArgValueLogs* arglogs, RetValueLogs* retlogs, const ArgSetting* asettings, size_t acount, const RetSetting* rsettings, size_t rcount, const char* output_path);
+void dump_io_pairs_from_sub_semantic_log_to_txt(ArgValueLogs* arglogs, RetValueLogs* retlogs, const ArgSetting* asettings, size_t acount, const RetSetting* rsettings, size_t rcount, const char* output_path) {
+    FILE *f = fopen(output_path, "w");
+    if (!f) {
+        perror("fopen");
+        // continue;
+        exit(EXIT_FAILURE);
+    }
+
+
+    // dump the entry
+    printf("Dumping sub-semantic log:\n");
+    for (size_t i = 0; i < acount; ++i) {
+        if (!asettings[i].is_sub_semantic_input) continue;
+        if (asettings[i].vtype == TYPE_FLOAT) {
+            printf("  IN  %-4s\n", asettings[i].name);
+            fprintf(f, "[IN] %s: ", asettings[i].name);
+            for (size_t j = 0; j < arglogs[i].count; ++j) {
+                printf("       %g\n", arglogs[i].data[j].f);
+                fprintf(f, "%.10f ", arglogs[i].data[j].f);
+            }
+            fprintf(f, "\n");
+        }
+        else if (asettings[i].vtype == TYPE_DOUBLE) {
+            printf("  IN  %-4s\n", asettings[i].name);
+            fprintf(f, "[IN] %s: ", asettings[i].name);
+            for (size_t j = 0; j < arglogs[i].count; ++j) {
+                printf("       %g\n", arglogs[i].data[j].d);
+                fprintf(f, "%.10g ", arglogs[i].data[j].d);
+            }
+            fprintf(f, "\n");
+        }
+    }
+
+    for (size_t i = 0; i < rcount; ++i) {
+        if (rsettings[i].vtype == TYPE_FLOAT) {
+            printf("  OUT %-4s\n", rsettings[i].name);
+            fprintf(f, "[OUT %lu] %s: ", rsettings[i].written_time, rsettings[i].name); // add last written time to variable name
+            for (size_t j = 0; j < retlogs[i].count; ++j) {
+                printf("       %g\n", retlogs[i].data[j].f);
+                fprintf(f, "%.10f ", retlogs[i].data[j].f);
+            }
+            fprintf(f, "\n");
+        }
+        else if (rsettings[i].vtype == TYPE_DOUBLE) {
+            printf("  OUT %-4s\n", rsettings[i].name);
+            fprintf(f, "[OUT %lu] %s: ", rsettings[i].written_time, rsettings[i].name); // add last written time to variable name
+            for (size_t j = 0; j < retlogs[i].count; ++j) {
+                printf("       %g\n", retlogs[i].data[j].d);
+                fprintf(f, "%.10g ", retlogs[i].data[j].d);
+            }
+            fprintf(f, "\n");
+        }
+    }
+    fclose(f);
+
+}
 
 #endif // JSON_UTIL_H

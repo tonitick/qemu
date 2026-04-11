@@ -12,9 +12,10 @@
 // Basic args structs
 // ===============================================================================================================================
 
-#define MAX_NAME    32  // maximum length for argument name, register name, etc. 
-#define MAX_REG      8  // maximum length for register name (e.g., "eax", "xmm0", etc.)
-#define MAX_ARGS  1000 // maximum distinct argument objects
+#define MAX_NAME 32  // maximum length for argument name, register name, etc. 
+#define MAX_REG 8  // maximum length for register name (e.g., "eax", "xmm0", etc.)
+#define MAX_ARGS 1000 // maximum distinct argument objects
+#define MAX_REACHDEFS 1000 // maximum distinct reaching definitions
 
 
 typedef enum {
@@ -90,13 +91,14 @@ typedef struct {
     char base_ptr_var_name[MAX_NAME]; // empty string if no parent pointer variable (struct var) for this mem arg
     int base_ptr_offset;
 
-    // for mem arg analysis for sub-semantics recovery
+    // for mem arg analysis in sub-semantics recovery
     bool is_written;
     bool is_read;
     bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
     int defined_stage; /* stage the reaching defintion comes from, used for sub-semantics recovery to track the reaching definition, set to -1 for non-sub-semantic mode */
                        /* -1 indicates the input for the function */
-                       /* -2 indicates not reach def not found */
+                       /* -2 indicates reach def not found */
+    int is_redefined; /* whether the arg is re-defined during sub-semantic data dependency analysis */
 } ArgSetting;
 
 void init_arg_setting(ArgSetting *setting);
@@ -118,6 +120,34 @@ void init_arg_setting(ArgSetting *setting) {
     setting->is_read = false;
     setting->is_sub_semantic_input = false;
     setting->defined_stage = -1;
+    setting->is_redefined = 0;
+}
+
+void copy_arg_setting(ArgSetting *dest, const ArgSetting *src);
+void copy_arg_setting(ArgSetting *dest, const ArgSetting *src) {
+    dest->location_type = src->location_type;
+    strncpy(dest->reg, src->reg, sizeof(dest->reg) - 1);
+    dest->reg[sizeof(dest->reg) - 1] = '\0';
+    dest->addr = src->addr;
+    dest->sz = src->sz;
+    dest->is_pointer = src->is_pointer;
+    dest->vtype = src->vtype;
+    dest->value_count = src->value_count;
+    for (size_t i = 0; i < src->value_count && i < 2; i++) {
+        dest->value_range[i] = src->value_range[i];
+    }
+    dest->non_ptr_iters = src->non_ptr_iters;
+    dest->concrete_value = src->concrete_value;
+
+    strncpy(dest->base_ptr_var_name, src->base_ptr_var_name, sizeof(dest->base_ptr_var_name) - 1);
+    dest->base_ptr_var_name[sizeof(dest->base_ptr_var_name) - 1] = '\0';
+    dest->base_ptr_offset = src->base_ptr_offset;
+
+    dest->is_written = src->is_written;
+    dest->is_read = src->is_read;
+    dest->is_sub_semantic_input = src->is_sub_semantic_input;
+    dest->defined_stage = src->defined_stage;
+    dest->is_redefined = src->is_redefined;
 }
 
 // output variable struct
@@ -153,6 +183,18 @@ void init_ret_setting(RetSetting *s) {
     s->concrete_value.u64 = 0;
     s->written_time = 0;
     s->defined_stage = -1;
+}
+
+void copy_arg_setting_from_ret_setting(ArgSetting *arg_setting, const RetSetting *ret_setting);
+void copy_arg_setting_from_ret_setting(ArgSetting *arg_setting, const RetSetting *ret_setting) {
+    arg_setting->location_type = ret_setting->location_type;
+    strncpy(arg_setting->reg, ret_setting->reg, sizeof(arg_setting->reg) - 1);
+    arg_setting->reg[sizeof(arg_setting->reg) - 1] = '\0';
+    arg_setting->addr = ret_setting->addr;
+    arg_setting->sz = ret_setting->sz;
+    arg_setting->vtype = ret_setting->vtype;
+    // arg_setting->concrete_value = ret_setting->concrete_value;
+    arg_setting->defined_stage = ret_setting->defined_stage;
 }
 
 // ===============================================================================================================================
@@ -313,6 +355,7 @@ void print_ret_settings(RetSetting* rsettings, size_t rcount)
             printf("addr=0x%lx, ", p->addr);
         }
         // printf("xaddr=0x%lx\n", p->xaddr);
+        printf("\n");
     }
 }
 
@@ -333,4 +376,11 @@ unsigned long cur_timestamp = 0; // global timestamp for ret value writes
 ArgSetting func_start_arg_settings[MAX_ARGS];
 size_t func_start_arg_count = 0;
 
+// for sub-semantic analysis, track memory variable definition
+ArgSetting active_var_defs[MAX_ARGS];
+size_t active_var_defs_count = 0;
+// match_var_defs[i] & match_var_uses[i] denote a reaching definition
+int match_var_defs[MAX_REACHDEFS]; // index in active_var_defs for the reaching definition that matches the memory variable in sub-semantic execution stage, -1 if not found
+int match_var_uses[MAX_REACHDEFS]; // index in arg_settings for the input argument that matches the reaching definition in sub-semantic execution stage, must be non-negative
+size_t match_reachdef_count = 0; // number of reaching definitions tracked
 #endif // VARIABLE_H

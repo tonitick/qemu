@@ -337,6 +337,7 @@ unsigned long sub_semantic_end;
 bool is_sub_semantic_collection = false;
 bool is_sub_semantics_mode = false;
 bool is_sub_semantic_last_stage = false;
+size_t stage_num = 0;
 void parse_sub_semantic_start_file(const char *filename);
 void parse_sub_semantic_start_file(const char *filename) {
     // a single line file with sub semantic start address in hex
@@ -796,6 +797,7 @@ void parse_json_args(const char *filename)
 
     free(json);
 
+    printf("Parsed %zu input settings from JSON:\n", arg_count);
     print_arg_settings(arg_settings, &arg_count);
 }
 
@@ -813,6 +815,7 @@ void parse_json_outs(const char *filename)
 
     free(json);
 
+    printf("Parsed %zu output settings from JSON:\n", ret_count);
     print_ret_settings(ret_settings, ret_count);
 }
 
@@ -830,7 +833,26 @@ void parse_func_start_json_args(const char *filename)
 
     free(json);
 
+    printf("Parsed %zu function start input (for specific execution path) settings from JSON:\n", func_start_arg_count);
     print_arg_settings(func_start_arg_settings, &func_start_arg_count);
+}
+
+// function start args parsing (for sub semantics)
+void parse_active_vars_file(const char *filename);
+void parse_active_vars_file(const char *filename)
+{
+    char *json = read_file_to_buf(filename);
+    if (!json) {
+        perror("read_file_to_buf failed");
+        return;
+    }
+
+    parse_arg_settings_from_json(json, active_var_defs, &active_var_defs_count);
+
+    free(json);
+
+    printf("Parsed %zu active variable definitions from JSON:\n", active_var_defs_count);
+    print_arg_settings(active_var_defs, &active_var_defs_count);
 }
 
 
@@ -1060,7 +1082,7 @@ int check_path_log_size_and_dump(char* dump_dir) {
             // fprintf(json_f, "%s\n", json_str);
             // fclose(json_f);
             // cJSON_free(json_str);
-            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count) != 0) {
+            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count, false) != 0) {
                 fprintf(stderr, "Failed to dump concrete inputs to json file for path_id %d\n", path_id-1);
                 continue; // skip to dump other path logs
             }
@@ -1098,7 +1120,7 @@ int check_path_log_size_and_dump(char* dump_dir) {
         // fprintf(ci_input_json_f, "%s\n", ci_input_json_str);
         // fclose(ci_input_json_f);
         // cJSON_free(ci_input_json_str);
-        if (dump_arg_settings_to_json_file(calling_interface_input_filepath, arg_settings, arg_count) != 0) {
+        if (dump_arg_settings_to_call_interface_json_file(calling_interface_input_filepath, arg_settings, arg_count) != 0) {
             fprintf(stderr, "Failed to dump calling interface input to json file\n");
             exit(EXIT_FAILURE);
         }
@@ -1197,7 +1219,7 @@ void dump_existing_path_logs(char* dump_dir) {
             }
             char concrete_input_filepath[256] = {0};
             snprintf(concrete_input_filepath, sizeof(concrete_input_filepath), "%s/concrete_inputs.json", path_dir);
-            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count) != 0) {
+            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count, false) != 0) {
                 fprintf(stderr, "Failed to dump concrete inputs to json file for path_id %d\n", path_id-1);
                 continue; // skip to dump other path logs
             }
@@ -1208,7 +1230,7 @@ void dump_existing_path_logs(char* dump_dir) {
     // input
     char calling_interface_input_filepath[256] = {0};
     snprintf(calling_interface_input_filepath, sizeof(calling_interface_input_filepath), "%s/calling_interface_input.json", dump_dir);
-    if (dump_arg_settings_to_json_file(calling_interface_input_filepath, arg_settings, arg_count) != 0) {
+    if (dump_arg_settings_to_call_interface_json_file(calling_interface_input_filepath, arg_settings, arg_count) != 0) {
         fprintf(stderr, "Failed to dump calling interface input to json file\n");
         exit(EXIT_FAILURE);
     }
@@ -1338,9 +1360,14 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         // fclose(f);
         dump_io_pairs_from_sub_semantic_log_to_txt(arglog_subsem, retlog_subsem, arg_settings, arg_count, ret_settings, ret_count, iotxt_filepath);
 
+        // dump refined sub-semantic input variables
+
+
         // TODO: hanlde fine-grained input/ouput identification for sub-semantic analysis
         // // dump input/output information in json
-        // // input (only is_sub_semantic_input == true)
+        // dump refined sub-semantic input variables
+        
+        // input (only is_sub_semantic_input == true)
         // cJSON *ci_input_root = cJSON_CreateObject();
         // if (ci_input_root == NULL) {
         //     fprintf(stderr, "Failed to create cJSON root object for calling interface\n");
@@ -1355,8 +1382,9 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         //     }
         //     cJSON_AddItemToObject(ci_input_root, arg_settings[i].name, arg_item);
         // }
-        // char sub_sem_input_filepath[256] = {0};
-        // snprintf(sub_sem_input_filepath, sizeof(sub_sem_input_filepath), "%s/sub_sem_input.json", dump_dir);
+        // input
+        char sub_sem_input_filepath[256] = {0};
+        snprintf(sub_sem_input_filepath, sizeof(sub_sem_input_filepath), "%s/sub_sem_input.json", dump_dir);
         // char *ci_input_json_str = cJSON_Print(ci_input_root);
         // if (ci_input_json_str == NULL) {
         //     fprintf(stderr, "Failed to print cJSON to string for calling interface\n");
@@ -1372,8 +1400,12 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         // fprintf(ci_input_json_f, "%s\n", ci_input_json_str);
         // fclose(ci_input_json_f);
         // cJSON_free(ci_input_json_str);
+        if (dump_arg_settings_to_json_file(sub_sem_input_filepath, arg_settings, arg_count, true) != 0) { // only dump float / double variables
+            fprintf(stderr, "Failed to dump sub-semantic input to json file\n");
+            exit(EXIT_FAILURE);
+        }
 
-        // // output
+        // output
         // cJSON *ci_output_root = cJSON_CreateObject();
         // if (ci_output_root == NULL) {
         //     fprintf(stderr, "Failed to create cJSON root object for calling interface output\n");
@@ -1387,8 +1419,8 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         //     }
         //     cJSON_AddItemToObject(ci_output_root, ret_settings[i].name, ret_item);
         // }
-        // char sub_sem_output_filepath[256] = {0};
-        // snprintf(sub_sem_output_filepath, sizeof(sub_sem_output_filepath), "%s/sub_sem_output.json", dump_dir);
+        char sub_sem_output_filepath[256] = {0};
+        snprintf(sub_sem_output_filepath, sizeof(sub_sem_output_filepath), "%s/sub_sem_output.json", dump_dir);
         // char *ci_output_json_str = cJSON_Print(ci_output_root);
         // if (ci_output_json_str == NULL) {
         //     fprintf(stderr, "Failed to print cJSON to string for calling interface output\n");
@@ -1404,6 +1436,18 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         // fprintf(ci_output_json_f, "%s\n", ci_output_json_str);
         // fclose(ci_output_json_f);
         // cJSON_free(ci_output_json_str);
+        if (dump_ret_settings_to_json_file(sub_sem_output_filepath, ret_settings, ret_count, true) != 0) { // only dump float / double variables
+            fprintf(stderr, "Failed to dump sub-semantic output to json file\n");
+            exit(EXIT_FAILURE);
+        }
+
+        // dump reaching definitions
+        char reaching_def_filepath[256] = {0};
+        snprintf(reaching_def_filepath, sizeof(reaching_def_filepath), "%s/reach_defs_mem.json", dump_dir);
+        if (dump_reaching_var_defs_to_json_file(reaching_def_filepath, active_var_defs, arg_settings, match_var_defs, match_var_uses, match_reachdef_count) != 0) {
+            fprintf(stderr, "Failed to dump reaching definitions to json file\n");
+            exit(EXIT_FAILURE);
+        }
 
         return 1; // success
     }

@@ -972,6 +972,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
     }
 }
 
+// TODO: could merge with update_addr_var_mem_cb
 static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                    qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
     if (!function_reached) return;
@@ -1191,7 +1192,9 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
     }
 }
 
-static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
+                   qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+    // update_subsem_addr_var_mem_cb(vcpu_index, info, vaddr, udata);
     if (!sub_semantic_reached) return;
     if (sub_semantic_cur_iteration != 1) return; // everything should be set after first iteration for sub-semantics
 
@@ -1204,49 +1207,184 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
     uint64_t pc = *(uint64_t *)udata;
     fprintf(stdout, "[MEMCB update_subsem_addr_var_mem_cb] pc=0x%08lx, access=0x%08" PRIx64 " (%u-byte %s)\n",
             pc, vaddr, sz_bytes, is_store ? "STORE" : "LOAD"); // warn: this could still be the start of tb
-    // TODO: handle non-fp memory variables
+
     // check whether the address is in arg_settings
     // Iterate through arg_settings to find a match
 
     // -----------------------------------------------------------------------------------------------------
     // input
     // -----------------------------------------------------------------------------------------------------
+    // bool found_arg_match = false;
+    // int match_idx = -1;
+    // for (size_t i = 0; i < arg_count; i++) {
+    //     ArgSetting *setting = &arg_settings[i];
+    //     // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+    //     if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
+    //         found_arg_match = true;
+    //         match_idx = i;
+    //         break;
+    //     }
+    // }
+    // if (found_arg_match) {
+    //     ArgSetting *setting = &arg_settings[match_idx];
+    //     if (sz_bytes == 4) { // only float
+    //         if (setting->vtype == TYPE_FLOAT) {
+    //             if (is_store) { // write to float arg setting
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx written, marking arg setting '%s' as is_written\n", vaddr, setting->name);
+    //                 setting->is_written = true;
+    //             }
+    //             else { // the mem arg is read
+    //                 if (!setting->is_written) { // read before write, mark as input
+    //                     printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx read before write in sub-semantics, marking arg setting '%s' as input\n", vaddr, setting->name);
+    //                     setting->is_read = true;
+    //                     setting->is_sub_semantic_input = true;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    // else { // not found_arg_match
+    //     if (sz_bytes == 4) { // heuristic: only 4 bytes var, and treat as float
+    //         if (within_stack_bounds(vaddr, sz_bytes)) { // only check whether there is new stack var
+    //             // create new stack variable
+    //             ArgSetting *new_setting = &arg_settings[arg_count++];
+    //             int offset = vaddr - stack_ptr;
+    //             snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
+    //             new_setting->location_type = TYPE_ADDR;
+    //             new_setting->addr = vaddr;
+    //             new_setting->sz = sz_bytes;
+    //             new_setting->vtype = TYPE_FLOAT;
+    //             new_setting->is_pointer = IS_PTR_FALSE;
+    //             new_setting->value_count = 2;
+    //             new_setting->value_range[0].f = default_float_range[0];
+    //             new_setting->value_range[1].f = default_float_range[1];
+    //             if (is_store) { // write to stack var, add to stack_vars_write
+    //                 new_setting->is_written = true;
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as written\n", new_setting->name);
+    //             }
+    //             else {
+    //                 new_setting->is_read = true;
+    //                 new_setting->is_sub_semantic_input = true;
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as read (input)\n", new_setting->name);
+    //             }
+    //         }
+    //     }
+
+    // }
+
+    // bool found_reachdef_match = false;
+    // int reachdef_var_idx = -1;
+    // for (size_t i = 0; i < active_var_defs_count; i++) {
+    //     ArgSetting *setting = &arg_settings[i];
+    //     // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+    //     if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
+    //         found_reachdef_match = true;
+    //         reachdef_var_idx = i;
+    //         break;
+    //     }
+    // }
+    // if (found_reachdef_match) {
+
+    // }
+
+    // // -----------------------------------------------------------------------------------------------------
+    // // output
+    // // -----------------------------------------------------------------------------------------------------
+    // bool found_ret_match = false;
+    // for (size_t i = 0; i < ret_count; i++) {
+    //     RetSetting *setting = &ret_settings[i];
+    //     // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+    //     if (setting->location_type == TYPE_ADDR && same_mem_locs_ret(setting, vaddr)) {
+    //         found_ret_match = true;
+    //         if (sz_bytes == 4 && is_store) {
+    //             setting->written_time = cur_timestamp++;
+    //         }
+    //         break;
+    //     }
+    // }
+    // if (!found_ret_match) {
+    //     if (sz_bytes == 4 && is_store) { // only float
+    //         if (within_stack_bounds(vaddr, sz_bytes)) { // only check whether there is new stack var
+    //             // create new ret setting
+    //             RetSetting *new_setting = &ret_settings[ret_count++];
+    //             int offset = vaddr - stack_ptr;
+    //             snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
+    //             new_setting->location_type = TYPE_ADDR;
+    //             new_setting->addr = vaddr;
+    //             // new_setting->sz = sz_bytes;
+    //             new_setting->vtype = TYPE_FLOAT;
+    //             new_setting->written_time = cur_timestamp++;
+    //             printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx is written & not found in ret_settings, creating new ret setting '%s'\n", vaddr, new_setting->name);
+    //         }
+    //         else if (is_sub_semantic_last_stage && found_arg_match) {
+    //             // for last stage of sub-semantics, if the written address matches an arg setting, create a ret setting
+    //             ArgSetting *arg_setting = &arg_settings[match_idx];
+    //             if (arg_setting->vtype == TYPE_FLOAT) {
+    //                 RetSetting *new_setting = &ret_settings[ret_count++];
+    //                 snprintf(new_setting->name, sizeof(new_setting->name), "%s", arg_setting->name);
+    //                 new_setting->location_type = TYPE_ADDR;
+    //                 new_setting->addr = vaddr;
+    //                 // new_setting->sz = sz_bytes;
+    //                 new_setting->vtype = TYPE_FLOAT;
+    //                 new_setting->written_time = cur_timestamp++;
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Last stage: Written address 0x%lx matches arg setting '%s', creating new ret setting '%s'\n", vaddr, arg_setting->name, new_setting->name);
+    //             }
+    //         }
+    //     }
+    // }
+
+    if (sz_bytes != 4) return; // FIXME: only handle 4 byte float for now
+
     bool found_arg_match = false;
-    int match_idx = -1;
+    // int arg_match_idx = -1;
     for (size_t i = 0; i < arg_count; i++) {
         ArgSetting *setting = &arg_settings[i];
-        // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
         if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
             found_arg_match = true;
-            match_idx = i;
+            // arg_match_idx = i;
             break;
         }
     }
-    if (found_arg_match) {
-        ArgSetting *setting = &arg_settings[match_idx];
-        if (sz_bytes == 4) { // only float
-            if (setting->vtype == TYPE_FLOAT) {
-                if (is_store) { // write to float arg setting
-                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx written, marking arg setting '%s' as is_written\n", vaddr, setting->name);
-                    setting->is_written = true;
-                }
-                else { // the mem arg is read
-                    if (!setting->is_written) { // read before write, mark as input
-                        printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx read before write in sub-semantics, marking arg setting '%s' as input\n", vaddr, setting->name);
-                        setting->is_read = true;
-                        setting->is_sub_semantic_input = true;
-                    }
-                }
-            }
+
+    bool found_ret_match = false;
+    int ret_match_idx = -1;
+    for (size_t i = 0; i < ret_count; i++) {
+        RetSetting *setting = &ret_settings[i];
+        if (setting->location_type == TYPE_ADDR && same_mem_locs_ret(setting, vaddr)) {
+            found_ret_match = true;
+            ret_match_idx = i;
+            break;
         }
     }
-    else { // not found_arg_match
-        if (sz_bytes == 4) { // heuristic: only 4 bytes var, and treat as float
-            if (within_stack_bounds(vaddr, sz_bytes)) { // only check whether there is new stack var
-                // create new stack variable
-                ArgSetting *new_setting = &arg_settings[arg_count++];
-                int offset = vaddr - stack_ptr;
-                snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
+
+    bool found_reachdef_match = false;
+    int reachdef_var_idx = -1;
+    for (size_t i = 0; i < active_var_defs_count; i++) {
+        ArgSetting *setting = &active_var_defs[i];
+        if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes) && !setting->is_redefined) {
+            found_reachdef_match = true;
+            reachdef_var_idx = i;
+            break;
+        }
+    }
+
+    if (!is_store) { // read
+        if (!found_arg_match && !found_ret_match) { // read before write, create new input variable
+            ArgSetting *new_setting = &arg_settings[arg_count];
+            init_arg_setting(new_setting);
+            snprintf(new_setting->name, sizeof(new_setting->name), "x_s%zu_%zu", stage_num, arg_count); // just use arg_idx as name for simplicity
+            if (found_reachdef_match) {
+                copy_arg_setting(&arg_settings[reachdef_var_idx], &active_var_defs[reachdef_var_idx]);
+                match_var_defs[match_reachdef_count] = reachdef_var_idx;
+                match_var_uses[match_reachdef_count] = arg_count;
+            }
+            else {
+                // check whether it's a stack variable
+                if (!within_stack_bounds(vaddr, sz_bytes)) {
+                    // non-stack variable should have been found in function-level analysis, handle it if we find excpetion
+                    fprintf(stderr, "Unsupported non-stack variable at address 0x%lx for sub-semantic input\n", vaddr);
+                    exit(EXIT_FAILURE);
+                }
                 new_setting->location_type = TYPE_ADDR;
                 new_setting->addr = vaddr;
                 new_setting->sz = sz_bytes;
@@ -1255,70 +1393,176 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
                 new_setting->value_count = 2;
                 new_setting->value_range[0].f = default_float_range[0];
                 new_setting->value_range[1].f = default_float_range[1];
-                if (is_store) { // write to stack var, add to stack_vars_write
-                    new_setting->is_written = true;
-                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as written\n", new_setting->name);
-                }
-                else {
-                    new_setting->is_read = true;
-                    new_setting->is_sub_semantic_input = true;
-                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as read (input)\n", new_setting->name);
-                }
-            }
-        }
 
-    }
-
-    // -----------------------------------------------------------------------------------------------------
-    // output
-    // -----------------------------------------------------------------------------------------------------
-    bool found_ret_match = false;
-    for (size_t i = 0; i < ret_count; i++) {
-        RetSetting *setting = &ret_settings[i];
-        // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
-        if (setting->location_type == TYPE_ADDR && same_mem_locs_ret(setting, vaddr)) {
-            found_ret_match = true;
-            if (sz_bytes == 4 && is_store) {
-                setting->written_time = cur_timestamp++;
+                match_var_defs[match_reachdef_count] = -1; // -1 indicates no matching reachdef variable
+                match_var_uses[match_reachdef_count] = arg_count;
             }
-            break;
+            arg_count++;
+            match_reachdef_count++;
         }
     }
-    if (!found_ret_match) {
-        if (sz_bytes == 4 && is_store) { // only float
-            if (within_stack_bounds(vaddr, sz_bytes)) { // only check whether there is new stack var
-                // create new ret setting
-                RetSetting *new_setting = &ret_settings[ret_count++];
-                int offset = vaddr - stack_ptr;
-                snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
-                new_setting->location_type = TYPE_ADDR;
-                new_setting->addr = vaddr;
-                // new_setting->sz = sz_bytes;
-                new_setting->vtype = TYPE_FLOAT;
-                new_setting->written_time = cur_timestamp++;
-                printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx is written & not found in ret_settings, creating new ret setting '%s'\n", vaddr, new_setting->name);
+    else { // write
+        if (!found_ret_match) { // create new ret variable
+            RetSetting *new_setting = &ret_settings[ret_count];
+            snprintf(new_setting->name, sizeof(new_setting->name), "y_s%zu_ret%zu", stage_num, ret_count); // just use ret_idx as name for simplicity
+            new_setting->location_type = TYPE_ADDR;
+            new_setting->addr = vaddr;
+            new_setting->sz = sz_bytes;
+            new_setting->vtype = TYPE_FLOAT;
+            new_setting->defined_stage = stage_num;
+            new_setting->written_time = cur_timestamp++;
+            
+            ret_count++;
+
+            if (found_reachdef_match) {
+                active_var_defs[reachdef_var_idx].is_redefined = true; // mark the matched var as redefined
             }
-            else if (is_sub_semantic_last_stage && found_arg_match) {
-                // for last stage of sub-semantics, if the written address matches an arg setting, create a ret setting
-                ArgSetting *arg_setting = &arg_settings[match_idx];
-                if (arg_setting->vtype == TYPE_FLOAT) {
-                    RetSetting *new_setting = &ret_settings[ret_count++];
-                    snprintf(new_setting->name, sizeof(new_setting->name), "%s", arg_setting->name);
-                    new_setting->location_type = TYPE_ADDR;
-                    new_setting->addr = vaddr;
-                    // new_setting->sz = sz_bytes;
-                    new_setting->vtype = TYPE_FLOAT;
-                    new_setting->written_time = cur_timestamp++;
-                    printf("  [MEMCB update_subsem_addr_var_mem_cb] Last stage: Written address 0x%lx matches arg setting '%s', creating new ret setting '%s'\n", vaddr, arg_setting->name, new_setting->name);
+            // new item in active_var_defs for the new definition
+            strncpy(active_var_defs[active_var_defs_count].name, new_setting->name, sizeof(active_var_defs[active_var_defs_count].name) - 1);
+            active_var_defs[active_var_defs_count].name[sizeof(active_var_defs[active_var_defs_count].name) - 1] = '\0';
+            copy_arg_setting_from_ret_setting(&active_var_defs[active_var_defs_count], new_setting);
+            active_var_defs_count++;
+        }
+        else { // ret varialbe already exists, update the written_time
+            ret_settings[ret_match_idx].written_time = cur_timestamp++;
+            if (found_reachdef_match) {
+                // new memory write must have been recoreded, and update the active_var_defs aleary
+                // check the found match has the same defined_stage as the current stage
+                if (active_var_defs[reachdef_var_idx].defined_stage != stage_num) {
+                    fprintf(stderr, "Error: redefinition of variable '%s' in different stages for sub-semantics at address 0x%lx, something wrong happened\n", active_var_defs[reachdef_var_idx].name, vaddr);
+                    exit(EXIT_FAILURE);
                 }
             }
         }
     }
+
 }
 
-static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
-                   qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
-    update_subsem_addr_var_mem_cb(vcpu_index, info, vaddr, udata);
+
+static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_t info, uint64_t vaddr, void *udata) {
+    // if (!sub_semantic_reached) return;
+    // if (sub_semantic_cur_iteration != 1) return; // everything should be set after first iteration for sub-semantics
+
+    // unsigned sz_shift = qemu_plugin_mem_size_shift(info);  // 0=8b,1=16b,2=32b,3=64b,...
+    // unsigned sz_bytes = 1u << sz_shift; // 1,2,4,8 bytes
+    // int is_store = qemu_plugin_mem_is_store(info);
+
+    // // check pc
+    // // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+    // uint64_t pc = *(uint64_t *)udata;
+    // fprintf(stdout, "[MEMCB update_subsem_addr_var_mem_cb] pc=0x%08lx, access=0x%08" PRIx64 " (%u-byte %s)\n",
+    //         pc, vaddr, sz_bytes, is_store ? "STORE" : "LOAD"); // warn: this could still be the start of tb
+    // // TODO: handle non-fp memory variables
+    // // check whether the address is in arg_settings
+    // // Iterate through arg_settings to find a match
+
+    // // -----------------------------------------------------------------------------------------------------
+    // // input
+    // // -----------------------------------------------------------------------------------------------------
+    // bool found_arg_match = false;
+    // int match_idx = -1;
+    // for (size_t i = 0; i < arg_count; i++) {
+    //     ArgSetting *setting = &arg_settings[i];
+    //     // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+    //     if (setting->location_type == TYPE_ADDR && same_mem_locs(setting, vaddr, sz_bytes)) {
+    //         found_arg_match = true;
+    //         match_idx = i;
+    //         break;
+    //     }
+    // }
+    // if (found_arg_match) {
+    //     ArgSetting *setting = &arg_settings[match_idx];
+    //     if (sz_bytes == 4) { // only float
+    //         if (setting->vtype == TYPE_FLOAT) {
+    //             if (is_store) { // write to float arg setting
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx written, marking arg setting '%s' as is_written\n", vaddr, setting->name);
+    //                 setting->is_written = true;
+    //             }
+    //             else { // the mem arg is read
+    //                 if (!setting->is_written) { // read before write, mark as input
+    //                     printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx read before write in sub-semantics, marking arg setting '%s' as input\n", vaddr, setting->name);
+    //                     setting->is_read = true;
+    //                     setting->is_sub_semantic_input = true;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    // else { // not found_arg_match
+    //     if (sz_bytes == 4) { // heuristic: only 4 bytes var, and treat as float
+    //         if (within_stack_bounds(vaddr, sz_bytes)) { // only check whether there is new stack var
+    //             // create new stack variable
+    //             ArgSetting *new_setting = &arg_settings[arg_count++];
+    //             int offset = vaddr - stack_ptr;
+    //             snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
+    //             new_setting->location_type = TYPE_ADDR;
+    //             new_setting->addr = vaddr;
+    //             new_setting->sz = sz_bytes;
+    //             new_setting->vtype = TYPE_FLOAT;
+    //             new_setting->is_pointer = IS_PTR_FALSE;
+    //             new_setting->value_count = 2;
+    //             new_setting->value_range[0].f = default_float_range[0];
+    //             new_setting->value_range[1].f = default_float_range[1];
+    //             if (is_store) { // write to stack var, add to stack_vars_write
+    //                 new_setting->is_written = true;
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as written\n", new_setting->name);
+    //             }
+    //             else {
+    //                 new_setting->is_read = true;
+    //                 new_setting->is_sub_semantic_input = true;
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Marking new stack variable arg setting '%s' as read (input)\n", new_setting->name);
+    //             }
+    //         }
+    //     }
+
+    // }
+
+    // // -----------------------------------------------------------------------------------------------------
+    // // output
+    // // -----------------------------------------------------------------------------------------------------
+    // bool found_ret_match = false;
+    // for (size_t i = 0; i < ret_count; i++) {
+    //     RetSetting *setting = &ret_settings[i];
+    //     // if (setting->location_type == TYPE_ADDR && setting->addr == vaddr) {
+    //     if (setting->location_type == TYPE_ADDR && same_mem_locs_ret(setting, vaddr)) {
+    //         found_ret_match = true;
+    //         if (sz_bytes == 4 && is_store) {
+    //             setting->written_time = cur_timestamp++;
+    //         }
+    //         break;
+    //     }
+    // }
+    // if (!found_ret_match) {
+    //     if (sz_bytes == 4 && is_store) { // only float
+    //         if (within_stack_bounds(vaddr, sz_bytes)) { // only check whether there is new stack var
+    //             // create new ret setting
+    //             RetSetting *new_setting = &ret_settings[ret_count++];
+    //             int offset = vaddr - stack_ptr;
+    //             snprintf(new_setting->name, sizeof(new_setting->name), "sp_%d", offset);
+    //             new_setting->location_type = TYPE_ADDR;
+    //             new_setting->addr = vaddr;
+    //             // new_setting->sz = sz_bytes;
+    //             new_setting->vtype = TYPE_FLOAT;
+    //             new_setting->written_time = cur_timestamp++;
+    //             printf("  [MEMCB update_subsem_addr_var_mem_cb] Address 0x%lx is written & not found in ret_settings, creating new ret setting '%s'\n", vaddr, new_setting->name);
+    //         }
+    //         else if (is_sub_semantic_last_stage && found_arg_match) {
+    //             // for last stage of sub-semantics, if the written address matches an arg setting, create a ret setting
+    //             ArgSetting *arg_setting = &arg_settings[match_idx];
+    //             if (arg_setting->vtype == TYPE_FLOAT) {
+    //                 RetSetting *new_setting = &ret_settings[ret_count++];
+    //                 snprintf(new_setting->name, sizeof(new_setting->name), "%s", arg_setting->name);
+    //                 new_setting->location_type = TYPE_ADDR;
+    //                 new_setting->addr = vaddr;
+    //                 // new_setting->sz = sz_bytes;
+    //                 new_setting->vtype = TYPE_FLOAT;
+    //                 new_setting->written_time = cur_timestamp++;
+    //                 printf("  [MEMCB update_subsem_addr_var_mem_cb] Last stage: Written address 0x%lx matches arg setting '%s', creating new ret setting '%s'\n", vaddr, arg_setting->name, new_setting->name);
+    //             }
+    //         }
+    //     }
+    // }
+    update_subsem_float_addr_var_mem_cb(vcpu_index, info, vaddr, udata); // TODO: handle non-fp memory variables
 }
 
 // int inline_ins = 0;
@@ -1641,6 +1885,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     filename = get_arg("sub_semantic_end", argc, argv);
     parse_sub_semantic_end_file(filename);
 
+    filename = get_arg("active_vars", argc, argv);
+    parse_active_vars_file(filename);
 
 	// filename = get_arg("logger", argc, argv);
 	// load_logger_config(filename);
@@ -1664,6 +1910,12 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     if (sub_semantic_last_stage_str && strcmp(sub_semantic_last_stage_str, "1") == 0) {
         is_sub_semantic_last_stage = true;
         printf("Sub-semantics last stage enabled\n");
+    }
+
+    const char* stage_num_str = get_arg("stage_num", argc, argv);
+    if (stage_num_str) {
+        stage_num = atoi(stage_num_str);
+        printf("Stage number set to: %zu\n", stage_num);
     }
 
 	// qemu_plugin_unimp_export_device((void *)&importer);
