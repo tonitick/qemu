@@ -2,8 +2,8 @@
 #define VIRTUAL_H
 
 #include <qemu-plugin.h>
-#include "json_util.h"
 #include "path_logger.h"
+#include "file_util.h"
 
 // ---------------------------------------------------------------
 // helpers

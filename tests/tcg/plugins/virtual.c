@@ -18,9 +18,6 @@ int isdigit(int c);
 #include <ctype.h>
 
 #include "virtual.h"
-// #include "variable.h"
-// #include "json_util.h"
-// #include "path_logger.h"
 #include "capstone_util.h"
 #include "struct_recovery.h"
 #include "logger.h"

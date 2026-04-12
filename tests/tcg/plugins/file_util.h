@@ -1,5 +1,5 @@
-#ifndef JSON_UTIL_H
-#define JSON_UTIL_H
+#ifndef FILE_UTIL_H
+#define FILE_UTIL_H
 
 #include <cjson/cJSON.h>
 #include "variable.h"
@@ -917,4 +917,4 @@ void dump_io_pairs_from_sub_semantic_log_to_txt(ArgValueLogs* arglogs, RetValueL
 
 }
 
-#endif // JSON_UTIL_H
+#endif // FILE_UTIL_H
