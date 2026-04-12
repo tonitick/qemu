@@ -300,8 +300,8 @@ error:
 // ArgSetting[] to json file using arg_setting_to_json
 // Return:
 //   0 on success, -1 on failure
-int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount, bool float_only);
-int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount, bool float_only) {
+int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount, bool float_only, bool active_var_only);
+int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *asettings, size_t acount, bool float_only, bool active_var_only) {
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         fprintf(stderr, "Failed to create cJSON root object\n");
@@ -310,6 +310,9 @@ int dump_arg_settings_to_json_file(const char *output_path, const ArgSetting *as
 
     for (size_t i = 0; i < acount; ++i) {
         if (float_only && asettings[i].vtype != TYPE_FLOAT && asettings[i].vtype != TYPE_DOUBLE) {
+            continue;
+        }
+        if (active_var_only && asettings[i].is_redefined) {
             continue;
         }
         cJSON *arg_item = arg_setting_to_json(&asettings[i]);

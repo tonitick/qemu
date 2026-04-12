@@ -1082,7 +1082,7 @@ int check_path_log_size_and_dump(char* dump_dir) {
             // fprintf(json_f, "%s\n", json_str);
             // fclose(json_f);
             // cJSON_free(json_str);
-            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count, false) != 0) {
+            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count, false, false) != 0) {
                 fprintf(stderr, "Failed to dump concrete inputs to json file for path_id %d\n", path_id-1);
                 continue; // skip to dump other path logs
             }
@@ -1219,7 +1219,7 @@ void dump_existing_path_logs(char* dump_dir) {
             }
             char concrete_input_filepath[256] = {0};
             snprintf(concrete_input_filepath, sizeof(concrete_input_filepath), "%s/concrete_inputs.json", path_dir);
-            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count, false) != 0) {
+            if (dump_arg_settings_to_json_file(concrete_input_filepath, arg_settings, arg_count, false, false) != 0) {
                 fprintf(stderr, "Failed to dump concrete inputs to json file for path_id %d\n", path_id-1);
                 continue; // skip to dump other path logs
             }
@@ -1400,7 +1400,7 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         // fprintf(ci_input_json_f, "%s\n", ci_input_json_str);
         // fclose(ci_input_json_f);
         // cJSON_free(ci_input_json_str);
-        if (dump_arg_settings_to_json_file(sub_sem_input_filepath, arg_settings, arg_count, true) != 0) { // only dump float / double variables
+        if (dump_arg_settings_to_json_file(sub_sem_input_filepath, arg_settings, arg_count, true, false) != 0) { // only dump float / double variables
             fprintf(stderr, "Failed to dump sub-semantic input to json file\n");
             exit(EXIT_FAILURE);
         }
@@ -1446,6 +1446,14 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         snprintf(reaching_def_filepath, sizeof(reaching_def_filepath), "%s/reach_defs_mem.json", dump_dir);
         if (dump_reaching_var_defs_to_json_file(reaching_def_filepath, active_var_defs, arg_settings, match_var_defs, match_var_uses, match_reachdef_count) != 0) {
             fprintf(stderr, "Failed to dump reaching definitions to json file\n");
+            exit(EXIT_FAILURE);
+        }
+
+        // dump active variable definitions
+        char active_var_def_filepath[256] = {0};
+        snprintf(active_var_def_filepath, sizeof(active_var_def_filepath), "%s/active_var_defs.json", dump_dir);
+        if (dump_arg_settings_to_json_file(active_var_def_filepath, active_var_defs, active_var_defs_count, false, true) != 0) { // only dump active variable definitions
+            fprintf(stderr, "Failed to dump active variable definitions to json file\n");
             exit(EXIT_FAILURE);
         }
 

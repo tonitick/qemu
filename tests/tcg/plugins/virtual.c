@@ -1401,7 +1401,7 @@ static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
     else { // write
         if (!found_ret_match) { // create new ret variable
             RetSetting *new_setting = &ret_settings[ret_count];
-            snprintf(new_setting->name, sizeof(new_setting->name), "y_s%zu_ret%zu", stage_num, ret_count); // just use ret_idx as name for simplicity
+            snprintf(new_setting->name, sizeof(new_setting->name), "y_s%zu_%zu", stage_num, ret_count); // just use ret_idx as name for simplicity
             new_setting->location_type = TYPE_ADDR;
             new_setting->addr = vaddr;
             new_setting->sz = sz_bytes;
