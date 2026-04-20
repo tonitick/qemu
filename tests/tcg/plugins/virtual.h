@@ -1436,6 +1436,7 @@ int check_sub_semantic_log_size_and_dump(char* dump_dir) {
         // fprintf(ci_output_json_f, "%s\n", ci_output_json_str);
         // fclose(ci_output_json_f);
         // cJSON_free(ci_output_json_str);
+        printf("[DEBUG] Dumping %zu sub-semantic output variable settings to json file %s\n", ret_count, sub_sem_output_filepath);
         if (dump_ret_settings_to_json_file(sub_sem_output_filepath, ret_settings, ret_count, true) != 0) { // only dump float / double variables
             fprintf(stderr, "Failed to dump sub-semantic output to json file\n");
             exit(EXIT_FAILURE);

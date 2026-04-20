@@ -249,6 +249,39 @@ int find_ptr_arg_by_addr(unsigned long addr, size_t sz, ArgSetting *asettings, s
     return -1;
 }
 
+// dump arg setting for debugging
+void print_arg_setting(ArgSetting *setting);
+void print_arg_setting(ArgSetting *setting) {
+    printf("Arg name: %s, location_type: %s, ", setting->name,
+           setting->location_type == TYPE_REG ? "reg" :
+           setting->location_type == TYPE_ADDR ? "addr" : "unknown");
+    if (setting->location_type == TYPE_REG) {
+        printf("reg: %s, ", setting->reg);
+    } else if (setting->location_type == TYPE_ADDR) {
+        printf("addr: 0x%lx, ", setting->addr);
+    }
+    printf("size: %zu, is_pointer: %s, type: %s, value_count: %zu\n",
+           setting->sz,
+           is_pointer_type_to_string(setting->is_pointer),
+           io_value_type_to_string(setting->vtype),
+           setting->value_count);
+    printf("value_range: [");
+    for (size_t i = 0; i < setting->value_count && i < 2; i++) {
+        if (setting->vtype == TYPE_FLOAT) {
+            printf("%g", setting->value_range[i].f);
+        } else if (setting->vtype == TYPE_DOUBLE) {
+            printf("%g", setting->value_range[i].d);
+        } else if (setting->vtype == TYPE_UINT32) {
+            printf("%u", setting->value_range[i].u32);
+        } else if (setting->vtype == TYPE_UINT16) {
+            printf("%u", setting->value_range[i].u32);
+        } else if (setting->vtype == TYPE_UINT8) {
+            printf("%u", setting->value_range[i].u32);
+        }
+    }
+    printf("]\n");
+}
+
 // dump asettings for debugging
 void print_arg_settings(ArgSetting *asettings, size_t *acount);
 void print_arg_settings(ArgSetting *asettings, size_t *acount)

@@ -567,7 +567,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     // main logic: rand variables and set registers/memory
     // is_logging_valid = true;
     sub_semantic_cur_iteration++;
-    printf("[VI randargs_sub_semantics] iteration %d:\n", sub_semantic_cur_iteration);
+    printf("[VI randargs_sub_semantics] iteration %d: arg_count = %zu, ret_count = %zu\n", sub_semantic_cur_iteration, arg_count, ret_count);
     // iterate arg_settings
     for (size_t i = 0; i < arg_count; i++) {
         ArgSetting *setting = &arg_settings[i];
@@ -1371,7 +1371,9 @@ static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
             init_arg_setting(new_setting);
             snprintf(new_setting->name, sizeof(new_setting->name), "x_s%zu_%zu", stage_num, arg_count); // just use arg_idx as name for simplicity
             if (found_reachdef_match) {
-                copy_arg_setting(&arg_settings[reachdef_var_idx], &active_var_defs[reachdef_var_idx]);
+                printf("[INFO] update_subsem_float_addr_var_mem_cb copy reaching variable definition to input %s\n", new_setting->name);
+                print_arg_setting(&active_var_defs[reachdef_var_idx]);
+                copy_arg_setting(new_setting, &active_var_defs[reachdef_var_idx]);
                 match_var_defs[match_reachdef_count] = reachdef_var_idx;
                 match_var_uses[match_reachdef_count] = arg_count;
             }
@@ -1396,6 +1398,9 @@ static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
             }
             arg_count++;
             match_reachdef_count++;
+
+            printf("[INFO] update_subsem_float_addr_var_mem_cb identified new sub-semantic input:\n");
+            print_arg_setting(new_setting);
         }
     }
     else { // write

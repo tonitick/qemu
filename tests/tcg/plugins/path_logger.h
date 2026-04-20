@@ -232,6 +232,7 @@ RetValueLogs   retlog_subsem[MAX_ARGS]; // outputs
 //   1 if all sub-semantic log size reach MAX_PER_PATH_LOG_SIZE, otherwise 0
 int is_sub_semantic_log_ready_for_dump(size_t acount);
 int is_sub_semantic_log_ready_for_dump(size_t acount) {
+    if (acount == 0) return 0; // if no input variable, return 0
     for (size_t i = 0; i < acount; ++i) {
         if (arglog_subsem[i].count < MAX_PER_PATH_LOG_SIZE) {
             return 0;
