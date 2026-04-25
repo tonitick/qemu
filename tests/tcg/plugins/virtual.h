@@ -4,6 +4,18 @@
 #include <qemu-plugin.h>
 #include "path_logger.h"
 #include "file_util.h"
+#include <sys/time.h>
+
+// ---------------------------------------------------------------
+// time helper
+// ---------------------------------------------------------------
+unsigned long long current_timestamp_ms(void);
+unsigned long long current_timestamp_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (unsigned long long)(ts.tv_sec) * 1000 + (ts.tv_nsec / 1000000);
+}
+
 
 // ---------------------------------------------------------------
 // helpers
@@ -421,6 +433,9 @@ bool find_rule_by_address(unsigned long long addr, rule_t **out_rule) {
 // ---------------------------------------------------------------
 bool function_reached = false;
 bool sub_semantic_reached = false;
+// function reach timestamp
+unsigned long long function_reach_time = 0;
+unsigned long long sub_semantic_reach_time = 0;
 
 // static void raiseirq(unsigned int cpu_index, void *udata);
 // static void updatepc(unsigned int cpu_index, void *udata);

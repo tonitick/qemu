@@ -178,16 +178,21 @@ static void randargs(unsigned int cpu_index, void *udata) {
     printf("[VI randargs] Current PC: 0x%08lx\n", pc);
 
     function_reached = true;
+    function_reach_time = current_timestamp_ms();
 
     // printf("randargs - results for iteration %d:\n", cur_iteration);
     if (cur_iteration >= MAX_FUZZ_ITERATIONS) {
         printf("[VI randargs] reached max fuzzing iterations %d, dump existing path logs and exiting\n", MAX_FUZZ_ITERATIONS);
         dump_existing_path_logs(dump_path);
+        unsigned long long fuzzing_end_time = current_timestamp_ms();
+        printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - function_reach_time) / 1000.0);
         exit(0);
     }
     if (check_path_log_size_and_dump(dump_path)) {
         printf("[VI randargs] log finished, dump related path logs\n");
         // print_all_path_logs();
+        unsigned long long fuzzing_end_time = current_timestamp_ms();
+        printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - function_reach_time) / 1000.0);
         exit(0);
     }
     if (cur_iteration == 0) {
@@ -491,6 +496,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     printf("[VI randargs_sub_semantics] Current PC: 0x%08lx\n", pc);
 
     sub_semantic_reached = true;
+    sub_semantic_reach_time = current_timestamp_ms();
 
     if (sub_semantic_cur_iteration >= MAX_FUZZ_ITERATIONS) {
         printf("[VI randargs_sub_semantics] reached max fuzzing iterations %d, dump existing path logs and exiting\n", MAX_FUZZ_ITERATIONS);
@@ -498,17 +504,19 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     }
     if (check_sub_semantic_log_size_and_dump(dump_path)) {
         printf("[VI randargs_sub_semantics] log finished, dump related path logs\n");
+        unsigned long long fuzzing_end_time = current_timestamp_ms();
+        printf("[VI randargs_sub_semantics] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - sub_semantic_reach_time) / 1000.0);
         exit(0);
     }
     if (sub_semantic_cur_iteration == 0) {
         clear_all_sub_semantic_logs();
-        // heristic: set all register args as sub_semantic inputs
-        for (size_t i = 0; i < arg_count; i++) {
-            ArgSetting *setting = &arg_settings[i];
-            if (setting->location_type == TYPE_REG) {
-                setting->is_sub_semantic_input = true;
-            }
-        }
+        // // heristic: set all register args as sub_semantic inputs
+        // for (size_t i = 0; i < arg_count; i++) {
+        //     ArgSetting *setting = &arg_settings[i];
+        //     if (setting->location_type == TYPE_REG) {
+        //         setting->is_sub_semantic_input = true;
+        //     }
+        // }
         for (size_t i = 0; i < ret_count; i++) {
             RetSetting *setting = &ret_settings[i];
             setting->written_time = 10000 + i;

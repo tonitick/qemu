@@ -92,9 +92,9 @@ typedef struct {
     int base_ptr_offset;
 
     // for mem arg analysis in sub-semantics recovery
-    bool is_written;
-    bool is_read;
-    bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
+    // bool is_written;
+    // bool is_read;
+    // bool is_sub_semantic_input; /* whether this arg is used in sub-semantics */
     int defined_stage; /* stage the reaching defintion comes from, used for sub-semantics recovery to track the reaching definition, set to -1 for non-sub-semantic mode */
                        /* -1 indicates the input for the function */
                        /* -2 indicates reach def not found */
@@ -116,9 +116,9 @@ void init_arg_setting(ArgSetting *setting) {
     setting->base_ptr_var_name[0] = '\0';
     setting->base_ptr_offset = 0;
 
-    setting->is_written = false;
-    setting->is_read = false;
-    setting->is_sub_semantic_input = false;
+    // setting->is_written = false;
+    // setting->is_read = false;
+    // setting->is_sub_semantic_input = false;
     setting->defined_stage = -1;
     setting->is_redefined = 0;
 }
@@ -143,9 +143,9 @@ void copy_arg_setting(ArgSetting *dest, const ArgSetting *src) {
     dest->base_ptr_var_name[sizeof(dest->base_ptr_var_name) - 1] = '\0';
     dest->base_ptr_offset = src->base_ptr_offset;
 
-    dest->is_written = src->is_written;
-    dest->is_read = src->is_read;
-    dest->is_sub_semantic_input = src->is_sub_semantic_input;
+    // dest->is_written = src->is_written;
+    // dest->is_read = src->is_read;
+    // dest->is_sub_semantic_input = src->is_sub_semantic_input;
     dest->defined_stage = src->defined_stage;
     dest->is_redefined = src->is_redefined;
 }

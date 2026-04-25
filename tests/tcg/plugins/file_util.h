@@ -875,7 +875,7 @@ void dump_io_pairs_from_sub_semantic_log_to_txt(ArgValueLogs* arglogs, RetValueL
     // dump the entry
     printf("Dumping sub-semantic log:\n");
     for (size_t i = 0; i < acount; ++i) {
-        if (!asettings[i].is_sub_semantic_input) continue;
+        // if (!asettings[i].is_sub_semantic_input) continue;
         if (asettings[i].vtype == TYPE_FLOAT) {
             printf("  IN  %-4s\n", asettings[i].name);
             fprintf(f, "[IN] %s: ", asettings[i].name);
