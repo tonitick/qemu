@@ -841,7 +841,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
         }
     }
     if (!found_arg_match) {
-        printf("[MEMCB update_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new float setting\n", vaddr);
+        printf("[MEMCB update_addr_var_mem_cb] No matching arg setting for address 0x%lx, creating new arg setting\n", vaddr);
         // create new arg setting
         if (arg_count >= MAX_ARGS) {
             fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
@@ -885,7 +885,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                 // handle struct allocation
                 new_setting->value_count = 1;
                 new_setting->value_range[0].u32 = cur_ptr_addr;
-                assert(new_setting->sz == 4); // 4 bytes addr size in arm
+                // assert(new_setting->sz == 4); // 4 bytes addr size in arm
                 struct NestedStruct* new_struct = ns_new_ptr(cur_ptr_addr, new_setting->sz, false);
                 cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
                 allocated_structs[allocated_struct_count++] = new_struct;
@@ -916,7 +916,7 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
             // printf("[MEMCB update_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
             qemu_plugin_vcpu_exit_tb_now();
             // return;
-        } else { // stack variables
+        } else { // stack variables / code section variables (constants)
             /*
               Heuristic:
                 1. Do read before write checking for stack variables to determine whether it's an input variable or not, using global stack_vars_write
@@ -972,6 +972,70 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                         // return;
                     }
                 }
+            }
+            else if (within_flash_bounds(vaddr, sz_bytes)) {
+                if (is_store) {
+                    fprintf(stderr, "[MEMCB update_addr_var_mem_cb] Unsupported write to flash memory at address 0x%lx\n", vaddr);
+                    exit(EXIT_FAILURE);
+                }
+                else {
+                    printf("[MEMCB update_addr_var_mem_cb] Address 0x%lx is within flash bounds, likely a constant read, creating new arg setting\n", vaddr);
+                    // create new arg setting
+                    if (arg_count >= MAX_ARGS) {
+                        fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
+                        exit(EXIT_FAILURE);
+                    }
+                    ArgSetting *new_setting = &arg_settings[arg_count++];
+                    init_arg_setting(new_setting);
+                    // snprintf(new_setting->name, sizeof(new_setting->name), "const_0x%lx", vaddr);
+                    snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
+                    new_setting->location_type = TYPE_ADDR;
+                    new_setting->addr = vaddr;
+                    new_setting->sz = sz_bytes;
+                    if (sz_bytes == 4) {
+                        new_setting->vtype = TYPE_UINT32; // treat as (unknown) pointer first
+                        new_setting->is_pointer = IS_PTR_UNKNOWN;
+                        new_setting->non_ptr_iters = 0;
+                        // handle struct allocation
+                        new_setting->value_count = 1;
+                        uint32_t flash_value; // read the value from flash and use it as the default value for this setting
+                        qemu_plugin_read_memory(vaddr, (uint8_t *)&flash_value, 4);
+                        new_setting->value_range[0].u32 = flash_value;
+                        // assert(new_setting->sz == 4); // 4 bytes addr size in arm
+                        struct NestedStruct* new_struct = ns_new_ptr(flash_value, new_setting->sz, false);
+                        // cur_ptr_addr += STRUCT_MEM_SIZE; // use (hopefully large enough) fixed size
+                        allocated_structs[allocated_struct_count++] = new_struct;
+                    } else if (sz_bytes == 2) {
+                        new_setting->vtype = TYPE_UINT16; // must be int
+                        new_setting->is_pointer = IS_PTR_FALSE; // 2-byte int not pointer
+                        new_setting->value_count = 2;
+                        new_setting->value_range[0].u32 = default_int_range[0];
+                        new_setting->value_range[1].u32 = default_int_range[1];
+                    } else if (sz_bytes == 1) {
+                        new_setting->vtype = TYPE_UINT8; // must be int
+                        new_setting->is_pointer = IS_PTR_FALSE; // 1-byte int not pointer
+                        new_setting->value_count = 2;
+                        new_setting->value_range[0].u32 = default_int_range[0];
+                        new_setting->value_range[1].u32 = default_int_range[1];
+                    } else {
+                        fprintf(stderr, "Unsupported size %u bytes for new arg setting at address 0x%lx\n", sz_bytes, vaddr);
+                        exit(EXIT_FAILURE);
+                    }
+
+                    printf("[MEMCB update_addr_var_mem_cb] logging invalidated: created new float stack variable arg setting '%s' for address 0x%lx\n", new_setting->name, vaddr);
+                    is_logging_valid = false;
+                    // set pc back to function start
+                    ValueUnion func_start_pc;
+                    func_start_pc.u32 = func_start;
+                    qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+                    // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+                    // printf("[MEMCB update_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+                    qemu_plugin_vcpu_exit_tb_now();
+                }
+            }
+            else {
+                fprintf(stderr, "[MEMCB update_addr_var_mem_cb] Unsupported memory access at address 0x%lx\n", vaddr);
+                exit(EXIT_FAILURE);
             }
         }
     }
@@ -1132,7 +1196,7 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
             // printf("[MEMCB update_float_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
             qemu_plugin_vcpu_exit_tb_now();
             // return;
-        } else { // stack variables
+        } else { // stack variables / code section variables (constants)
             /*
               Heuristic:
                 1. Do read before write checking for stack variables to determine whether it's an input variable or not, using global stack_vars_write
@@ -1191,6 +1255,61 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                         qemu_plugin_vcpu_exit_tb_now();
                         // return;
                     }
+                }
+            }
+            else {
+                // fprintf(stderr, "[MEMCB update_float_addr_var_mem_cb] Unsupported memory access at address 0x%lx\n", vaddr);
+                // exit(EXIT_FAILURE);
+                if (is_store) {
+                    fprintf(stderr, "[MEMCB update_float_addr_var_mem_cb] Unsupported write to flash memory at address 0x%lx\n", vaddr);
+                    exit(EXIT_FAILURE);
+                }
+                else {
+                    printf("[MEMCB update_float_addr_var_mem_cb] Address 0x%lx is within flash bounds, likely a constant read, creating new float arg setting\n", vaddr);
+                    // create new arg setting
+                    if (arg_count >= MAX_ARGS) {
+                        fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
+                        exit(EXIT_FAILURE);
+                    }
+                    ArgSetting *new_setting = &arg_settings[arg_count++];
+                    init_arg_setting(new_setting);
+                    // snprintf(new_setting->name, sizeof(new_setting->name), "const_0x%lx", vaddr);
+                    snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
+                    new_setting->location_type = TYPE_ADDR;
+                    new_setting->addr = vaddr;
+                    new_setting->sz = sz_bytes;
+                    if (sz_bytes == 4) {
+                        new_setting->vtype = TYPE_FLOAT;
+                        new_setting->is_pointer = IS_PTR_FALSE;
+                        new_setting->value_count = 1;
+                        uint32_t flash_value; // read the value from flash and use it as the default value for this setting
+                        qemu_plugin_read_memory(vaddr, (uint8_t *)&flash_value, 4);
+                        // treat the flash value as a uint32 and convert to float using the same bytes
+                        ValueUnion u;
+                        u.u32 = flash_value;
+                        new_setting->value_range[0].f = u.f;
+                    } else if (sz_bytes == 8) {
+                        new_setting->vtype = TYPE_DOUBLE;
+                        new_setting->is_pointer = IS_PTR_FALSE;
+                        new_setting->value_count = 1;
+                        uint64_t flash_value; // read the value from flash and use it as the default value for this setting
+                        qemu_plugin_read_memory(vaddr, (uint8_t *)&flash_value, 8);
+                        // treat the flash value as a uint64 and convert to double using the same bytes
+                        ValueUnion u;
+                        u.u64 = flash_value;
+                        new_setting->value_range[0].d = u.d;
+                    } else {
+                        fprintf(stderr, "Unsupported size %u bytes for new float arg setting at address 0x%lx\n", sz_bytes, vaddr);
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // set pc back to function start
+                    ValueUnion func_start_pc;
+                    func_start_pc.u32 = func_start;
+                    qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+                    // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
+                    // printf("[MEMCB update_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
+                    qemu_plugin_vcpu_exit_tb_now();
                 }
             }
         }

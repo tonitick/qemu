@@ -8,7 +8,7 @@
 // ===============================================================================================================================
 
 #define STRUCT_MEM_SIZE 512
-unsigned long cur_ptr_addr = 0x30000020; // pointer assignment start at 0x20000020
+unsigned long cur_ptr_addr = 0x30000020; // pointer assignment start at 0x30000020
 
 #define MAX_NESTED_FIELDS 100
 struct NestedStruct {
@@ -34,13 +34,23 @@ size_t allocated_struct_count = 0;
 
 int find_parent_struct_by_addr(unsigned int addr, size_t sz); // return index in allocated_structs, or -1 if not found
 int find_parent_struct_by_addr(unsigned int addr, size_t sz) {
+    // find the allocated struct that contains the memory address range [addr, addr+sz)
+    // if multiple structs contain the range, return the one <= the addr and closest to the addr
+    //   this happen in global variables and the memory is not allocated by cur_ptr_addr
+    //   TODO: think whether updating the variable parent pointer in memory callback is necessary)
+    //         the real parent pointer (closest one) should have been read before though
+    int found_index = -1;
+    unsigned int closest_addr = 0;
     for (size_t i = 0; i < allocated_struct_count; i++) {
         struct NestedStruct *s = allocated_structs[i];
         if (addr >= s->loc.addr && addr + sz <= s->loc.addr + STRUCT_MEM_SIZE) {
-            return (int)i;
+            if (found_index == -1 || s->loc.addr > closest_addr) {
+                closest_addr = s->loc.addr;
+                found_index = (int)i;
+            }
         }
     }
-    return -1;
+    return found_index;
 }
 
 
@@ -215,7 +225,7 @@ static inline struct NestedStruct *ns_new_off(size_t offset, size_t size) {
 // Stack vars
 // ===============================================================================================================================
 #define MAX_STACK_OFF 1024
-unsigned long stack_ptr = 0x20000600;
+unsigned long stack_ptr = 0x21000600;
 typedef struct {
     unsigned long addr;
     size_t sz;
@@ -244,5 +254,22 @@ int within_stack_bounds(uint64_t addr, size_t sz) {
     }
     return 1;
 }
+
+// ===============================================================================================================================
+// Flash vars (viewed as constants)
+// ===============================================================================================================================
+#define MAX_FLASH_OFF (2 * 1024 * 1024) // 2 MB
+unsigned long flash_ptr = 0x8000000; // 0x8000000 - 0x8020000
+int within_flash_bounds(uint64_t addr, size_t sz);
+int within_flash_bounds(uint64_t addr, size_t sz) {
+    if (addr + sz < flash_ptr) {
+        return 0;
+    }
+    if (addr > flash_ptr + MAX_FLASH_OFF) {
+        return 0;
+    }
+    return 1;
+}
+
 
 #endif // STRUCT_RECOVERY_H
