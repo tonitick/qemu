@@ -1265,51 +1265,13 @@ static void update_float_addr_var_mem_cb(unsigned int vcpu_index,
                     exit(EXIT_FAILURE);
                 }
                 else {
-                    printf("[MEMCB update_float_addr_var_mem_cb] Address 0x%lx is within flash bounds, likely a constant read, creating new float arg setting\n", vaddr);
-                    // create new arg setting
-                    if (arg_count >= MAX_ARGS) {
-                        fprintf(stderr, "Maximum argument settings reached, cannot add new setting for address 0x%lx\n", vaddr);
-                        exit(EXIT_FAILURE);
-                    }
-                    ArgSetting *new_setting = &arg_settings[arg_count++];
-                    init_arg_setting(new_setting);
-                    // snprintf(new_setting->name, sizeof(new_setting->name), "const_0x%lx", vaddr);
-                    snprintf(new_setting->name, sizeof(new_setting->name), "arg%zu", arg_count); // just use arg_idx as name for simplicity
-                    new_setting->location_type = TYPE_ADDR;
-                    new_setting->addr = vaddr;
-                    new_setting->sz = sz_bytes;
-                    if (sz_bytes == 4) {
-                        new_setting->vtype = TYPE_FLOAT;
-                        new_setting->is_pointer = IS_PTR_FALSE;
-                        new_setting->value_count = 1;
-                        uint32_t flash_value; // read the value from flash and use it as the default value for this setting
-                        qemu_plugin_read_memory(vaddr, (uint8_t *)&flash_value, 4);
-                        // treat the flash value as a uint32 and convert to float using the same bytes
-                        ValueUnion u;
-                        u.u32 = flash_value;
-                        new_setting->value_range[0].f = u.f;
-                    } else if (sz_bytes == 8) {
-                        new_setting->vtype = TYPE_DOUBLE;
-                        new_setting->is_pointer = IS_PTR_FALSE;
-                        new_setting->value_count = 1;
-                        uint64_t flash_value; // read the value from flash and use it as the default value for this setting
-                        qemu_plugin_read_memory(vaddr, (uint8_t *)&flash_value, 8);
-                        // treat the flash value as a uint64 and convert to double using the same bytes
-                        ValueUnion u;
-                        u.u64 = flash_value;
-                        new_setting->value_range[0].d = u.d;
-                    } else {
-                        fprintf(stderr, "Unsupported size %u bytes for new float arg setting at address 0x%lx\n", sz_bytes, vaddr);
-                        exit(EXIT_FAILURE);
-                    }
-
-                    // set pc back to function start
-                    ValueUnion func_start_pc;
-                    func_start_pc.u32 = func_start;
-                    qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
-                    // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15);
-                    // printf("[MEMCB update_addr_var_mem_cb] set PC back to function start: 0x%08x\n", pc);
-                    qemu_plugin_vcpu_exit_tb_now();
+                    // Flash/code-section float read = literal-pool constant (e.g. a coefficient
+                    // or the FLT_MAX guard threshold loaded via `vldr sX, [pc, #imm]`). It is part
+                    // of the function's own semantics, NOT an external input. Leave the memory
+                    // untouched so the function reads its genuine constant, and do NOT promote it
+                    // to a randomizable arg. (Promoting it produced a constant "input" pinned to
+                    // the literal value and an illegal write into the code/literal pool.)
+                    printf("[MEMCB update_float_addr_var_mem_cb] Address 0x%lx is within flash bounds, treating as constant (not an input)\n", vaddr);
                 }
             }
         }
@@ -1505,12 +1467,21 @@ static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
                 match_var_uses[match_reachdef_count] = arg_count;
             }
             else {
-                // check whether it's a stack variable
-                if (!within_stack_bounds(vaddr, sz_bytes)) {
-                    // non-stack variable should have been found in function-level analysis, handle it if we find excpetion
-                    fprintf(stderr, "Unsupported non-stack variable at address 0x%lx for sub-semantic input\n", vaddr);
-                    exit(EXIT_FAILURE);
+                // Flash/code-section read = literal-pool constant (e.g. a coefficient or a guard
+                // threshold). It is part of the function's semantics, not an input — skip it
+                // without promoting to a randomizable variable. Nothing has been committed yet
+                // (arg_count / match_reachdef_count not incremented), so returning is safe.
+                if (within_flash_bounds(vaddr, sz_bytes)) {
+                    printf("[INFO] update_subsem_float_addr_var_mem_cb: read 0x%lx in flash, treating as constant (not an input)\n", vaddr);
+                    return;
                 }
+                // A read-before-write of a RAM location (a stack local, or a struct/heap
+                // field such as a PID gain) that was not produced by a prior stage is a
+                // sub-semantic input. Register it with a default float range so it gets
+                // randomized and the regression can recover the dependence.
+                // (Previously any non-stack RAM read aborted collection with exit(FAILURE),
+                // which killed every stage that reads struct fields -- e.g. the final PID
+                // output block that loads _kp/_ki/_kd from the object at [r4, #...].)
                 new_setting->location_type = TYPE_ADDR;
                 new_setting->addr = vaddr;
                 new_setting->sz = sz_bytes;
@@ -1519,6 +1490,11 @@ static void update_subsem_float_addr_var_mem_cb(unsigned int vcpu_index,
                 new_setting->value_count = 2;
                 new_setting->value_range[0].f = default_float_range[0];
                 new_setting->value_range[1].f = default_float_range[1];
+                if (within_stack_bounds(vaddr, sz_bytes)) {
+                    int offset = vaddr - stack_ptr;
+                    strncpy(new_setting->base_ptr_var_name, "sp", sizeof(new_setting->base_ptr_var_name) - 1);
+                    new_setting->base_ptr_offset = offset;
+                }
 
                 match_var_defs[match_reachdef_count] = -1; // -1 indicates no matching reachdef variable
                 match_var_uses[match_reachdef_count] = arg_count;
