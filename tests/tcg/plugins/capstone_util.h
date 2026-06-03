@@ -88,14 +88,23 @@ int arm_insn_is_fp_mem_access(const cs_insn *ins)
         }
     }
 
-    /* Also cover FP multi-load/store */
-    // switch (ins->id) {
-    // case ARM_INS_VLDM: case ARM_INS_VLDMIA: case ARM_INS_VLDMDB:
-    // case ARM_INS_VSTM: case ARM_INS_VSTMIA: case ARM_INS_VSTMDB:
-    //     return 1;
-    // default:
-    //     break;
-    // }
+    /* Also cover FP multi-load/store (VLDM/VSTM). Capstone exposes these as a
+     * base register + register list rather than an ARM_OP_MEM operand, so the
+     * loop above misses them (verified: `vldmia r2!,{s2}` has op_count=2, both
+     * ARM_OP_REG, no ARM_OP_MEM). arm_insn_is_fp() above still returns true
+     * (VFP2 group / s-reg operand), so we reach here. Without this, the body of
+     * an array-walk loop (e.g. getAverage's `vldmia r2!,{s2}` at 0x8000274 --
+     * the only instruction that dereferences the _array pointer) is invisible to
+     * the plugin, so _array never gets promoted to a pointer and is wrongly
+     * demoted to a float scalar. All four forms are FP memory accesses; only the
+     * IA/DB variants exist in this Capstone (no plain ARM_INS_VLDM/VSTM). */
+    switch (ins->id) {
+    case ARM_INS_VLDMIA: case ARM_INS_VLDMDB:
+    case ARM_INS_VSTMIA: case ARM_INS_VSTMDB:
+        return 1;
+    default:
+        break;
+    }
 
     return 0;
 }

@@ -35,6 +35,27 @@ int default_int_range[2] = {0, 2};
 float default_float_range[2] = {0.5, 5.0};
 double default_double_range[2] = {0.5, 5.0};
 
+/*
+ * Runaway-loop watchdog.
+ *
+ * A 4-byte struct field discovered at runtime is tentatively treated as an
+ * unknown pointer and seeded with a pointer-arena address (~0x30000000+, i.e.
+ * hundreds of millions). When such a field is actually a scalar loop bound
+ * (e.g. RunningAverage::_count at [this+4] driving the average loop), that huge
+ * value makes the function loop hundreds of millions of times. It never
+ * returns, so randargs is never re-entered and the NON_PTR_ITER_MAX demotion
+ * path (which only runs on re-entry) can never fix it; QEMU just gets killed by
+ * the outer timeout with zero data collected. The loop also keeps re-entering
+ * its body basic block, so current_path overflows its MAX_PATH_LENGTH buffer.
+ *
+ * The watchdog bounds basic-block visits per function invocation. Kept just
+ * below MAX_PATH_LENGTH so it also prevents the current_path overflow. See
+ * trigger_loop_watchdog() for how the offending field is demoted.
+ */
+#define WATCHDOG_PATH_THRESHOLD (MAX_PATH_LENGTH - 16)
+/* Range for a field the watchdog demotes; avoid 0 to skip empty-loop/NaN paths. */
+int loop_count_range[2] = {1, 3};
+
 // typedef unsigned long hwaddr;
 // typedef struct unimp_exporter {
 //     uint64_t (*read)(void *opaque, hwaddr offset, unsigned size);
@@ -239,13 +260,22 @@ static void randargs(unsigned int cpu_index, void *udata) {
             printf("[VI randargs] unknown pointer arg '%s' has been tried %d times\n", setting->name, setting->non_ptr_iters);
             if (setting->non_ptr_iters > NON_PTR_ITER_MAX) {
                 printf("[VI randargs] fixing unknown pointer arg '%s' to non-pointer integer after %d tries\n", setting->name, setting->non_ptr_iters);
-                if (setting->location_type == TYPE_ADDR) { // heuristic: all 4 bytes struct are floats (todo: improve)
-                    // set to float
+                if (setting->location_type == TYPE_ADDR) {
+                    // A struct field still IS_PTR_UNKNOWN after NON_PTR_ITER_MAX
+                    // iterations was never dereferenced as a pointer AND never
+                    // touched by an FP instruction (the float callback promotes
+                    // genuine float fields to TYPE_FLOAT on first FP access, long
+                    // before this). So it is an integer scalar -- typically a
+                    // loop bound (e.g. RunningAverage::_count). Demote to a small
+                    // int, NOT a float: a float bit-pattern reinterpreted as a
+                    // loop count is a huge integer and would make the loop walk
+                    // hundreds of millions of elements. If we ever guess wrong,
+                    // the float callback re-promotes it on the next FP access.
                     setting->is_pointer = IS_PTR_FALSE;
-                    setting->vtype = TYPE_FLOAT;
+                    setting->vtype = TYPE_UINT32;
                     setting->value_count = 2;
-                    setting->value_range[0].f = default_float_range[0];
-                    setting->value_range[1].f = default_float_range[1];
+                    setting->value_range[0].u32 = loop_count_range[0];
+                    setting->value_range[1].u32 = loop_count_range[1];
 
                     clear_all_path_logs();
                 }
@@ -807,10 +837,74 @@ static void clearpathlogs(unsigned int cpu_index, void *udata) {
     clear_all_path_logs();
 }
 
+/*
+ * Runaway-loop watchdog handler (see WATCHDOG_PATH_THRESHOLD).
+ *
+ * Demote-one-then-retry: each firing demotes a single still-IS_PTR_UNKNOWN
+ * 4-byte scalar field from suspected-pointer to a small integer, then restarts
+ * the invocation. Confirmed pointers (IS_PTR_TRUE -- promoted the moment their
+ * region is first dereferenced) are never touched, so any field genuinely
+ * walked by the loop is already spared by the time we get here. We pick the
+ * earliest-discovered remaining unknown (FIFO): the loop bound is typically
+ * loaded at/near the top of the function (for getAverage, _count is the very
+ * first field read), while pointers used only later are discovered later. If
+ * the runaway persists, the watchdog fires again and demotes the next unknown,
+ * so we demote the minimum number of fields. If no unknown scalar remains we
+ * cannot resolve it here, so we salvage what was collected and exit rather than
+ * spin until the outer timeout.
+ */
+static void trigger_loop_watchdog(void) {
+    int victim = -1;
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *setting = &arg_settings[i];
+        if (setting->vtype == TYPE_UINT32 && setting->is_pointer == IS_PTR_UNKNOWN) {
+            victim = (int)i;
+            break;
+        }
+    }
+
+    if (victim < 0) {
+        printf("[WATCHDOG] runaway loop after %d basic-block visits, but no unknown "
+               "scalar field left to demote; dumping collected logs and exiting\n",
+               WATCHDOG_PATH_THRESHOLD);
+        dump_existing_path_logs(dump_path);
+        exit(0);
+    }
+
+    ArgSetting *setting = &arg_settings[victim];
+    setting->is_pointer = IS_PTR_FALSE;
+    setting->vtype = TYPE_UINT32;
+    setting->value_count = 2;
+    setting->value_range[0].u32 = loop_count_range[0];
+    setting->value_range[1].u32 = loop_count_range[1];
+    printf("[WATCHDOG] runaway loop after %d basic-block visits: demoting suspected "
+           "loop-bound field '%s' (was unknown pointer) to int range [%u, %u] and retrying\n",
+           WATCHDOG_PATH_THRESHOLD, setting->name,
+           loop_count_range[0], loop_count_range[1]);
+
+    /* Arg settings changed -> previously logged traces are inconsistent. */
+    clear_all_path_logs();
+    is_logging_valid = false;
+    current_path_len = 0;
+
+    /* Restart this invocation from the function entry. */
+    ValueUnion func_start_pc;
+    func_start_pc.u32 = func_start;
+    qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+    qemu_plugin_vcpu_exit_tb_now();
+}
+
 static void logbbstart(unsigned int cpu_index, void *udata) {
     // get pc vlue
     // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not accurate sometimes
     uint64_t pc = *(uint64_t *)udata;
+    // Runaway-loop watchdog: a misclassified scalar loop bound (seeded with a
+    // huge pointer-arena value) would loop here forever and overflow
+    // current_path. Bail out and demote the offending field before that.
+    if (current_path_len >= WATCHDOG_PATH_THRESHOLD) {
+        trigger_loop_watchdog();
+        return;
+    }
     current_path[current_path_len++] = (uint64_t)pc;
 }
 
