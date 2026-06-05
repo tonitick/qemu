@@ -36,7 +36,7 @@ float default_float_range[2] = {0.5, 5.0};
 double default_double_range[2] = {0.5, 5.0};
 
 /*
- * Runaway-loop watchdog.
+ * Non-termination watchdogs (runaway loop + fault-spin).
  *
  * A 4-byte struct field discovered at runtime is tentatively treated as an
  * unknown pointer and seeded with a pointer-arena address (~0x30000000+, i.e.
@@ -50,11 +50,39 @@ double default_double_range[2] = {0.5, 5.0};
  *
  * The watchdog bounds basic-block visits per function invocation. Kept just
  * below MAX_PATH_LENGTH so it also prevents the current_path overflow. See
- * trigger_loop_watchdog() for how the offending field is demoted.
+ * trigger_inf_exe_watchdog() for how the offending field is demoted.
+ *
+ * The bb-visit watchdog above only counts the *function's own* basic blocks, so
+ * it only catches a runaway that keeps re-entering an in-function loop body
+ * (e.g. getAverage walking _ar[i] sequentially). It is blind to a different
+ * failure mode: when a misclassified scalar is used as an *array index* rather
+ * than a loop bound (e.g. RunningAverage::getAverageLast computes
+ * _ar + (_idx-1)*4, and a pointer-arena _idx makes that address ~0xF000xxxx on
+ * the very first iteration), the load faults immediately and the CPU vectors to
+ * the firmware's default fault handler -- typically a `b .` infinite loop that
+ * lives outside the function range and is never instrumented. Execution never
+ * re-enters the function's basic blocks, so the bb-visit watchdog never fires
+ * and QEMU spins until the outer timeout with zero data collected.
+ *
+ * The global-execution watchdog below counts *every* translated block executed
+ * since the function was last (re-)entered via randargs. A stuck fault handler
+ * (or any out-of-function spin) racks up TB executions without re-entering
+ * randargs, so once the count crosses GLOBAL_EXEC_WATCHDOG_THRESHOLD we run the
+ * same demote-one-then-retry recovery as the bb-visit watchdog. The threshold
+ * is far above the TB count of any legitimate single invocation (which returns
+ * and re-enters randargs, resetting the counter) yet fires in well under a
+ * second against a tight handler loop.
  */
 #define WATCHDOG_PATH_THRESHOLD (MAX_PATH_LENGTH - 16)
+/* Instruction budget per function invocation. Counts ALL executed instructions
+ * (incl. out-of-function fault handlers that spin), reset on each function entry.
+ * Catches faults/runaways that never re-enter an instrumented basic block -- e.g.
+ * a wild _array[_index] access that bus-faults into a spinning default handler.
+ * Generous so legitimate (small, demoted) loops never trip it. */
+#define GLOBAL_EXEC_WATCHDOG_THRESHOLD 2000000UL
+unsigned long iter_insn_count = 0;
 /* Range for a field the watchdog demotes; avoid 0 to skip empty-loop/NaN paths. */
-int loop_count_range[2] = {1, 3};
+int demote_int_range[2] = {1, 3};
 
 // typedef unsigned long hwaddr;
 // typedef struct unimp_exporter {
@@ -274,8 +302,8 @@ static void randargs(unsigned int cpu_index, void *udata) {
                     setting->is_pointer = IS_PTR_FALSE;
                     setting->vtype = TYPE_UINT32;
                     setting->value_count = 2;
-                    setting->value_range[0].u32 = loop_count_range[0];
-                    setting->value_range[1].u32 = loop_count_range[1];
+                    setting->value_range[0].u32 = demote_int_range[0];
+                    setting->value_range[1].u32 = demote_int_range[1];
 
                     clear_all_path_logs();
                 }
@@ -294,6 +322,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     }
 
     current_path_len = 0;
+    iter_insn_count = 0; /* reset per-invocation instruction-budget watchdog */
 
     // main logic: rand variables and set registers/memory
     is_logging_valid = true;
@@ -837,61 +866,114 @@ static void clearpathlogs(unsigned int cpu_index, void *udata) {
     clear_all_path_logs();
 }
 
+/* Demote one discovered scalar field (by arg index) from suspected-pointer to
+ * a small int, so a loop bound / array index stays bounded. */
+static void demote_field_to_int(int idx) {
+    ArgSetting *setting = &arg_settings[idx];
+    setting->is_pointer = IS_PTR_FALSE;
+    setting->vtype = TYPE_UINT32;
+    setting->value_count = 2;
+    setting->value_range[0].u32 = demote_int_range[0];
+    setting->value_range[1].u32 = demote_int_range[1];
+    printf("[WATCHDOG] demoting field '%s' (was unknown pointer) to int range [%u, %u]\n",
+           setting->name, demote_int_range[0], demote_int_range[1]);
+}
+
 /*
- * Runaway-loop watchdog handler (see WATCHDOG_PATH_THRESHOLD).
+ * Watchdog handler. Demotes still-IS_PTR_UNKNOWN 4-byte scalar fields (loop
+ * bounds / array indices seeded with huge pointer-arena values) to small ints,
+ * then restarts the invocation from func_start. Confirmed pointers (IS_PTR_TRUE,
+ * promoted the moment their region is dereferenced) are never touched.
  *
- * Demote-one-then-retry: each firing demotes a single still-IS_PTR_UNKNOWN
- * 4-byte scalar field from suspected-pointer to a small integer, then restarts
- * the invocation. Confirmed pointers (IS_PTR_TRUE -- promoted the moment their
- * region is first dereferenced) are never touched, so any field genuinely
- * walked by the loop is already spared by the time we get here. We pick the
- * earliest-discovered remaining unknown (FIFO): the loop bound is typically
- * loaded at/near the top of the function (for getAverage, _count is the very
- * first field read), while pointers used only later are discovered later. If
- * the runaway persists, the watchdog fires again and demotes the next unknown,
- * so we demote the minimum number of fields. If no unknown scalar remains we
- * cannot resolve it here, so we salvage what was collected and exit rather than
- * spin until the outer timeout.
+ * Two demotion strategies, by trigger:
+ *
+ *  - spare_last_unknown == false  (basic-block runaway): demote ONE field, the
+ *    earliest-discovered unknown (FIFO). A pure runaway loop recovers cleanly
+ *    and the watchdog can fire again for the next field, so we demote the
+ *    minimum. The loop bound is typically read at/near the top of the function.
+ *
+ *  - spare_last_unknown == true  (instruction-budget / fault): the trigger was a
+ *    wild memory access (e.g. _array[_index] with a still-huge _index) that
+ *    bus-faulted into a spinning handler. Recovery (PC reset) works ONCE, but a
+ *    SECOND hardware fault while the first is active locks up the Cortex-M core
+ *    -- and QEMU's NVIC active-exception state can't be reliably cleared from a
+ *    plugin. So we must avoid a second fault: demote ALL unknown scalars in one
+ *    shot EXCEPT the most-recently-discovered one, which is almost always the
+ *    base pointer of the faulting deref (compiled code loads the base register
+ *    just before the indexed access). One fault -> one clean retry with every
+ *    index/count bounded and the base pointer intact (it then gets dereferenced
+ *    in-arena and promoted normally). If there is only one unknown, demote it.
+ *
+ * If no unknown scalar remains, we cannot resolve it here, so we salvage what
+ * was collected and exit rather than spin until the outer timeout.
  */
-static void trigger_loop_watchdog(void) {
-    int victim = -1;
+static void trigger_inf_exe_watchdog(const char *reason, bool spare_last_unknown) {
+    // collect IS_PTR_UNKNOWN args
+    int unknowns[MAX_ARGS];
+    int n_unknown = 0;
     for (size_t i = 0; i < arg_count; i++) {
         ArgSetting *setting = &arg_settings[i];
         if (setting->vtype == TYPE_UINT32 && setting->is_pointer == IS_PTR_UNKNOWN) {
-            victim = (int)i;
-            break;
+            unknowns[n_unknown++] = (int)i;
         }
     }
 
-    if (victim < 0) {
-        printf("[WATCHDOG] runaway loop after %d basic-block visits, but no unknown "
-               "scalar field left to demote; dumping collected logs and exiting\n",
-               WATCHDOG_PATH_THRESHOLD);
+    if (n_unknown == 0) {
+        printf("[WATCHDOG] %s, but no unknown scalar field left to demote; "
+               "dumping collected logs and exiting\n", reason);
         dump_existing_path_logs(dump_path);
         exit(0);
     }
 
-    ArgSetting *setting = &arg_settings[victim];
-    setting->is_pointer = IS_PTR_FALSE;
-    setting->vtype = TYPE_UINT32;
-    setting->value_count = 2;
-    setting->value_range[0].u32 = loop_count_range[0];
-    setting->value_range[1].u32 = loop_count_range[1];
-    printf("[WATCHDOG] runaway loop after %d basic-block visits: demoting suspected "
-           "loop-bound field '%s' (was unknown pointer) to int range [%u, %u] and retrying\n",
-           WATCHDOG_PATH_THRESHOLD, setting->name,
-           loop_count_range[0], loop_count_range[1]);
+    int demote_count; /* demote unknowns[0 .. demote_count) */
+    if (spare_last_unknown && n_unknown >= 2) {
+        demote_count = n_unknown - 1; /* spare the last (likely base pointer) */
+    } else if (spare_last_unknown) {
+        demote_count = n_unknown;     /* only one unknown -> demote it */
+    } else {
+        demote_count = 1;             /* BB runaway: FIFO, one at a time */
+    }
+
+    printf("[WATCHDOG] %s: demoting %d of %d unknown scalar field(s) and retrying\n",
+           reason, demote_count, n_unknown);
+    for (int k = 0; k < demote_count; k++) {
+        demote_field_to_int(unknowns[k]);
+    }
+    if (spare_last_unknown && n_unknown >= 2) {
+        printf("[WATCHDOG] sparing last-discovered unknown '%s' (likely base pointer)\n",
+               arg_settings[unknowns[n_unknown - 1]].name);
+    }
 
     /* Arg settings changed -> previously logged traces are inconsistent. */
     clear_all_path_logs();
     is_logging_valid = false;
     current_path_len = 0;
+    iter_insn_count = 0;
 
     /* Restart this invocation from the function entry. */
     ValueUnion func_start_pc;
     func_start_pc.u32 = func_start;
     qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
     qemu_plugin_vcpu_exit_tb_now();
+}
+
+/*
+ * Instruction-budget watchdog (see GLOBAL_EXEC_WATCHDOG_THRESHOLD). Registered on EVERY
+ * executed instruction -- including out-of-function code -- so it catches cases
+ * the basic-block watchdog cannot: a wild memory access (e.g. _array[_index]
+ * with a still-huge _index) that bus-faults into a default handler which just
+ * spins `b .`. That handler hits no instrumented basic block and touches no
+ * tracked memory, so only a raw instruction count since function entry detects
+ * it. Resolution is the same demote-one-then-retry as the BB watchdog: bounding
+ * the offending index/count field stops the fault, and a genuine pointer field
+ * (e.g. _array) is spared because once the index is small the read lands back in
+ * its arena and the field gets promoted before we would demote it.
+ */
+static void count_insn_cb(unsigned int cpu_index, void *udata) {
+    if (!function_reached) return;
+    if (++iter_insn_count > GLOBAL_EXEC_WATCHDOG_THRESHOLD) {
+        trigger_inf_exe_watchdog("instruction budget exceeded (suspected fault-spin or runaway)", true);
+    }
 }
 
 static void logbbstart(unsigned int cpu_index, void *udata) {
@@ -902,7 +984,7 @@ static void logbbstart(unsigned int cpu_index, void *udata) {
     // huge pointer-arena value) would loop here forever and overflow
     // current_path. Bail out and demote the offending field before that.
     if (current_path_len >= WATCHDOG_PATH_THRESHOLD) {
-        trigger_loop_watchdog();
+        trigger_inf_exe_watchdog("basic-block budget exceeded (runaway loop)", false);
         return;
     }
     current_path[current_path_len++] = (uint64_t)pc;
@@ -1792,6 +1874,16 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 
     for (i = 0; i < n; i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
+
+        // Instruction-budget watchdog: register on EVERY instruction, including
+        // code outside the function (e.g. a default fault handler that just spins
+        // `b .`), so a fault/runaway that never re-enters an instrumented basic
+        // block is still caught. Must be before the function-range filter below.
+        if (!is_sub_semantics_mode) {
+            qemu_plugin_register_vcpu_insn_exec_cb(
+                insn, count_insn_cb, QEMU_PLUGIN_CB_RW_REGS, NULL);
+        }
+
         // check insn addr within [function_start, function_end]
         unsigned long largest_func_end = func_ends[0];
         for (size_t fi = 1; fi < func_end_count; fi++) {
