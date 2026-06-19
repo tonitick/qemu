@@ -410,6 +410,8 @@ typedef struct {
     unsigned long long address;
     cb_func_t func;        // function pointer, NOT the name
     char args[384];
+    int trigger_visit;     // sub-semantic loop stages: fire only on the k-th visit of
+                           // `address` within one invocation (0 = any/every visit)
 } rule_t;
 
 rule_t rules[MAX_RULES];
@@ -772,8 +774,11 @@ void parse_rules_file(const char *filename) {
             // strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args) - 1);
             strncpy(rules[rules_count].args, args, sizeof(rules[rules_count].args));
             rules[rules_count].args[sizeof(rules[rules_count].args) - 1] = '\0';
+            // For sub-semantic randargs/logrets rules the 3rd token is the visit index.
+            rules[rules_count].trigger_visit = atoi(args);
         } else {
             rules[rules_count].args[0] = '\0';
+            rules[rules_count].trigger_visit = 0;
         }
 
         rules_count++;

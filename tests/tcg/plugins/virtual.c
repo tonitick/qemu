@@ -25,10 +25,6 @@ int isdigit(int c);
 #include "detour.h"
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
-// int counter;
-
-// #define HOOK_POINT	(0x106d6)
-// #define ANCHOR		(0x106cc)
 
 char dump_path[256] = "collected_data";
 int default_int_range[2] = {0, 2};
@@ -84,13 +80,13 @@ unsigned long iter_insn_count = 0;
 /* Range for a field the watchdog demotes; avoid 0 to skip empty-loop/NaN paths. */
 int demote_int_range[2] = {1, 3};
 
-// typedef unsigned long hwaddr;
-// typedef struct unimp_exporter {
-//     uint64_t (*read)(void *opaque, hwaddr offset, unsigned size);
-//     void (*write)(void *opaque, hwaddr offset, uint64_t value, unsigned size);
-// } DEV_XPORTER;
-
-// static const char * runtime;
+/* Visit-gated sub-semantic triggers (per-iteration loop stages).
+ * randargs / logrets sit on a loop-body address that is hit `cnt` times per
+ * invocation; each fires on EVERY visit but acts only on its configured visit
+ * index (parsed from virtuals.txt; 0 == any/every visit, the non-loop default).
+ * The counters are per-invocation and reset in setargs(). */
+int randargs_target_visit = 0, logrets_target_visit = 0;
+int randargs_visit_counter = 0, logrets_visit_counter = 0;
 
 // --------------------------------------------------------------------------------------
 // randargs
@@ -489,6 +485,11 @@ static void setargs(unsigned int cpu_index, void *udata) {
     uint64_t pc = *(uint64_t *)udata;
     printf("[VI setargs] Current PC: 0x%08lx\n", pc);
 
+    // New function invocation: reset the per-invocation visit counters used to
+    // gate the loop-iteration sub-semantic triggers.
+    randargs_visit_counter = 0;
+    logrets_visit_counter = 0;
+
     // set stack pointer
     ValueUnion sp_val;
     sp_val.u32 = stack_ptr;
@@ -548,11 +549,19 @@ static void setargs(unsigned int cpu_index, void *udata) {
 }
 
 static int sub_semantic_cur_iteration = 0;
+
 static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     // print pc for debugging
     // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not accurate sometimes
     uint64_t pc = *(uint64_t *)udata;
-    printf("[VI randargs_sub_semantics] Current PC: 0x%08lx\n", pc);
+
+    // Visit gate: this address may be a loop body hit multiple times; only
+    // (re-)randomize on the configured visit. Count every visit, act on one.
+    randargs_visit_counter++;
+    if (randargs_target_visit != 0 && randargs_visit_counter != randargs_target_visit) {
+        return;
+    }
+    printf("[VI randargs_sub_semantics] Current PC: 0x%08lx (visit %d)\n", pc, randargs_visit_counter);
 
     sub_semantic_reached = true;
     sub_semantic_reach_time = current_timestamp_ms();
@@ -818,7 +827,14 @@ static void logrets(unsigned int cpu_index, void *udata) {
 static void logrets_sub_semantics(unsigned int cpu_index, void *udata) {
     // This function is called when the magic instruction is executed
     // It will dump the latest return values to the log buffer
-    printf("[VI logrets_sub_semantics] logrets_sub_semantics called, dumping latest return values.\n");
+
+    // Visit gate: the end address may be a loop body hit multiple times; only
+    // capture (and reset) on the configured visit.
+    logrets_visit_counter++;
+    if (logrets_target_visit != 0 && logrets_visit_counter != logrets_target_visit) {
+        return;
+    }
+    printf("[VI logrets_sub_semantics] logrets_sub_semantics called (visit %d), dumping latest return values.\n", logrets_visit_counter);
     print_ret_settings(ret_settings, ret_count);
     for (size_t i = 0; i < ret_count; i++) {
         RetSetting *setting = &ret_settings[i];
@@ -856,6 +872,15 @@ static void logrets_sub_semantics(unsigned int cpu_index, void *udata) {
         // logged_out_values[i] = value;
         setting->concrete_value = value; // use a field in RetSetting to store concrete output value instead
     }
+
+    // End of this stage's execution: reset PC back to the function start to re-run
+    // for the next fuzzing iteration. This used to be a modifier inline-update at the
+    // end address, but an inline update fires on every visit of a loop-body address
+    // and would reset on the wrong pass -- doing it here keeps it visit-gated.
+    ValueUnion func_start_pc;
+    func_start_pc.u32 = func_start;
+    qemu_plugin_set_register((uint8_t *)&func_start_pc, ARM_V7M_REG_R15);
+    qemu_plugin_vcpu_exit_tb_now();
 }
 
 // --------------------------------------------------------------------------------------
@@ -1959,7 +1984,14 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         for (size_t rid = 0; rid < rules_count; rid++) {
             rule_t* rule = &rules[rid];
             if (rule->address == qemu_plugin_insn_vaddr(insn)) {
-                printf("[INSTALL randargs/logrets/setargs/randargs_sub_semantics/logrets_sub_semantics] 0x%lx\n", instr_addrs[instr_idx]);
+                printf("[INSTALL randargs/logrets/setargs/randargs_sub_semantics/logrets_sub_semantics] 0x%lx (visit %d)\n", instr_addrs[instr_idx], rule->trigger_visit);
+                // Capture the visit index for the sub-semantic loop-stage triggers so
+                // the callbacks can gate on it (one randargs + one logrets rule per stage).
+                if (rule->func == randargs_sub_semantics) {
+                    randargs_target_visit = rule->trigger_visit;
+                } else if (rule->func == logrets_sub_semantics) {
+                    logrets_target_visit = rule->trigger_visit;
+                }
                 qemu_plugin_register_vcpu_insn_exec_cb(
                     insn, rule->func, QEMU_PLUGIN_CB_RW_REGS, (void *)&instr_addrs[instr_idx]);
             }
