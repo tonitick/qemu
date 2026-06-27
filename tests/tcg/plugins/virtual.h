@@ -211,6 +211,36 @@ uint32_t qemu_get_register_32(int reg)
     return return_data;
 }
 
+// Inverse of qemu_get_register_32 for single-precision FP (sN) registers.
+// The generic qemu_plugin_set_register / gdb_write_register path writes the raw
+// enum index as an 8-byte double, so it lands on the WRONG double register for
+// any sN except s0 (e.g. writing s2 hits d2=s4:s5 instead of d1=s2:s3). Here we
+// remap sN -> its GDB double register (ARM_V7M_S0 + n/2) and read-modify-write
+// only the correct 4-byte half, preserving the sibling lane in the same double.
+// GPR (reg < ARM_V7M_S0) are written directly, unchanged.
+void qemu_set_register_32(int reg, uint32_t val);
+void qemu_set_register_32(int reg, uint32_t val)
+{
+    if (reg < ARM_V7M_S0) {
+        qemu_plugin_set_register((uint8_t *)&val, reg);
+        return;
+    }
+    int n       = reg - ARM_V7M_S0;       // s-register number
+    int dbl_idx = ARM_V7M_S0 + (n / 2);   // GDB double register d{n/2}
+    int off     = (n % 2) ? 4 : 0;        // odd s = upper half of the double
+    int sibling = (n % 2) ? (reg - 1) : (reg + 1);
+    uint32_t sib = qemu_get_register_32(sibling);  // preserve the other lane
+    uint8_t buf[8];
+    if (off == 0) {            // even s: [ val | sibling ]
+        memcpy(buf,     &val, 4);
+        memcpy(buf + 4, &sib, 4);
+    } else {                   // odd s:  [ sibling | val ]
+        memcpy(buf,     &sib, 4);
+        memcpy(buf + 4, &val, 4);
+    }
+    qemu_plugin_set_register(buf, dbl_idx);
+}
+
 uint64_t qemu_get_register_64(int reg);
 uint64_t qemu_get_register_64(int reg)
 {

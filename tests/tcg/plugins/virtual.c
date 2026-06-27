@@ -442,7 +442,16 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 perror("randargs");
                 exit(EXIT_FAILURE);
             }
-            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg)); // TODO: check with arslan, looks like it write 8 bytes for all float regs?
+            if (setting->vtype == TYPE_FLOAT) {
+                // single-precision sN: remap to its double register + write only the
+                // correct 4-byte half (preserving the sibling lane). The raw path below
+                // writes the wrong double for any sN except s0 -- see qemu_set_register_32.
+                qemu_set_register_32(get_reg_by_name(setting->reg), value.u32);
+            } else {
+                // GPR (and TYPE_DOUBLE dN -- single-precision firmware here, so dN does
+                // not occur; if it ever does it needs an analogous qemu_set_register_64).
+                qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
+            }
         } else if (setting->location_type == TYPE_ADDR) {
             if (setting->vtype == TYPE_FLOAT) {
                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
@@ -512,7 +521,16 @@ static void setargs(unsigned int cpu_index, void *udata) {
                 fprintf(stderr, "[VI setargs] Unsupported value type for register in setting '%s'\n", setting->name);
                 exit(EXIT_FAILURE);
             }
-            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg)); // TODO: check with arslan, looks like it write 8 bytes for all float regs?
+            if (setting->vtype == TYPE_FLOAT) {
+                // single-precision sN: remap to its double register + write only the
+                // correct 4-byte half (preserving the sibling lane). The raw path below
+                // writes the wrong double for any sN except s0 -- see qemu_set_register_32.
+                qemu_set_register_32(get_reg_by_name(setting->reg), value.u32);
+            } else {
+                // GPR (and TYPE_DOUBLE dN -- single-precision firmware here, so dN does
+                // not occur; if it ever does it needs an analogous qemu_set_register_64).
+                qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
+            }
         } else if (setting->location_type == TYPE_ADDR) {
             if (setting->vtype == TYPE_FLOAT) {
                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
@@ -741,7 +759,16 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
                 fprintf(stderr, "[VI randargs_sub_semantics] Unsupported value type for register in setting '%s'\n", setting->name);
                 exit(EXIT_FAILURE);
             }
-            qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg)); // TODO: check with arslan, looks like it write 8 bytes for all float regs?
+            if (setting->vtype == TYPE_FLOAT) {
+                // single-precision sN: remap to its double register + write only the
+                // correct 4-byte half (preserving the sibling lane). The raw path below
+                // writes the wrong double for any sN except s0 -- see qemu_set_register_32.
+                qemu_set_register_32(get_reg_by_name(setting->reg), value.u32);
+            } else {
+                // GPR (and TYPE_DOUBLE dN -- single-precision firmware here, so dN does
+                // not occur; if it ever does it needs an analogous qemu_set_register_64).
+                qemu_plugin_set_register((uint8_t *)&value, get_reg_by_name(setting->reg));
+            }
         } else if (setting->location_type == TYPE_ADDR) {
             if (setting->vtype == TYPE_FLOAT) {
                 qemu_plugin_write_memory(setting->addr, (uint8_t *)&value, 4);
