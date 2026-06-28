@@ -709,37 +709,15 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
                 setting->value_range[1].d = default_float_range[1];
                 value.d = get_random_double(setting->value_range[0].d, setting->value_range[1].d);
             }
-        } else if (setting->vtype == TYPE_UINT32) {
-            if (setting->value_count == 1) {
-                value.u32 = setting->value_range[0].u32;
-            }
-            else if (setting->value_count == 2) {
-                // Generate a random uint32 in the range
-                value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
-            } else {
-                // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint32 type in setting '%s'\n", setting->name);
-                // exit(EXIT_FAILURE);
-
-                // heuristic: integer inputs are mostly related to control flows or pointers, keep the same value
-                // FIXME: not sure if this will cause some issues
-                continue;
-            }
-        } else if (setting->vtype == TYPE_UINT16 || setting->vtype == TYPE_UINT8) {
-            if (setting->value_count == 1) {
-                value.u32 = setting->value_range[0].u32;
-            }
-            else if (setting->value_count == 2) {
-                // Generate a random uint32 in the range
-                value.u32 = setting->value_range[0].u32 + (get_random_word() % (setting->value_range[1].u32 - setting->value_range[0].u32 + 1));
-            }
-            else {
-                // fprintf(stderr, "[VI randargs_sub_semantics] Invalid value count for uint8/16 type in setting '%s'\n", setting->name);
-                // exit(EXIT_FAILURE);
-
-                // heuristic: integer inputs are mostly related to control flows or pointers, keep the same value
-                // FIXME: not sure if this will cause some issues
-                continue;
-            }
+        } else if (setting->vtype == TYPE_UINT32 || setting->vtype == TYPE_UINT16 || setting->vtype == TYPE_UINT8) {
+            // Integer variables in sub-semantic fuzzing are control flow / array
+            // indices / pointer-derived scalars (e.g. _index, _size, _count, loop
+            // counters), not data inputs. Randomizing them changes which memory slot
+            // an indexed load reads and how many loop iterations run, making a stage's
+            // output depend on uncaptured state (unfittable). So never set them here --
+            // keep the concrete value setargs already wrote, so addressing/control flow
+            // stay stable and only the float data is fuzzed.
+            continue;
         } else {
             fprintf(stderr, "[VI randargs_sub_semantics] Unsupported value type in setting '%s'\n", setting->name);
             // perror("randargs");
