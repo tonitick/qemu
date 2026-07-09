@@ -2195,6 +2195,21 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     filename = get_arg("args", argc, argv);
     parse_json_args(filename);
 
+    /* If the args statically pre-populate an object arena (memory-located fields at
+     * ~0x30000020+, reconstructed from a callee's interface for a delegating
+     * function), advance cur_ptr_addr past those 512-byte blocks so any later DYNAMIC
+     * field discovery allocates non-colliding arenas. No-op for a normally-discovered
+     * function (its args carry no arena-region addr). */
+    for (size_t i = 0; i < arg_count; i++) {
+        ArgSetting *s = &arg_settings[i];
+        if (s->location_type == TYPE_ADDR && (unsigned long)s->addr >= 0x30000020UL) {
+            unsigned long block = 0x30000020UL +
+                (((unsigned long)s->addr - 0x30000020UL) / STRUCT_MEM_SIZE) * STRUCT_MEM_SIZE;
+            if (block + STRUCT_MEM_SIZE > cur_ptr_addr)
+                cur_ptr_addr = block + STRUCT_MEM_SIZE;
+        }
+    }
+
     filename = get_arg("outs", argc, argv);
     parse_json_outs(filename);
 
