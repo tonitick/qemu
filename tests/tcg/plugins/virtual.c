@@ -27,7 +27,7 @@ int isdigit(int c);
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 char dump_path[256] = "collected_data";
-int default_int_range[2] = {0, 2};
+int default_int_range[2] = {0, 3};
 float default_float_range[2] = {0.5, 5.0};
 double default_double_range[2] = {0.5, 5.0};
 
@@ -225,10 +225,17 @@ static void randargs(unsigned int cpu_index, void *udata) {
     function_reached = true;
     function_reach_time = current_timestamp_ms();
 
+    // New run starts here (randargs fires at func_start on every run, including the
+    // invalidation/PC-reset retry). Reset the edge tracker so the restart cannot
+    // fabricate a spurious (last_bb_of_aborted_run -> func_start) edge.
+    have_last_bb = false;
+    last_bb_idx = -1;
+
     // printf("randargs - results for iteration %d:\n", cur_iteration);
     if (cur_iteration >= MAX_FUZZ_ITERATIONS) {
         printf("[VI randargs] reached max fuzzing iterations %d, dump existing path logs and exiting\n", MAX_FUZZ_ITERATIONS);
         dump_existing_path_logs(dump_path);
+        dump_edge_coverage(dump_path);
         unsigned long long fuzzing_end_time = current_timestamp_ms();
         printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - function_reach_time) / 1000.0);
         exit(0);
@@ -236,6 +243,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     if (check_path_log_size_and_dump(dump_path)) {
         printf("[VI randargs] log finished, dump related path logs\n");
         // print_all_path_logs();
+        dump_edge_coverage(dump_path);
         unsigned long long fuzzing_end_time = current_timestamp_ms();
         printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - function_reach_time) / 1000.0);
         exit(0);
@@ -253,6 +261,15 @@ static void randargs(unsigned int cpu_index, void *udata) {
         // log previous iteration values
         // if (is_logging_valid) {
         record_trace_values(current_path, current_path_len, arg_settings, arg_count, ret_settings, ret_count);
+        // Mark the *recorded* edge set from the just-committed path: consecutive
+        // blocks in current_path are executed edges from a valid sample. This is the
+        // committed subset of edge_exec (may undercount vs edge_exec when a loop
+        // truncated current_path, which is the intended semantics).
+        for (int k = 0; k + 1 < (int)current_path_len; k++) {
+            int si = bb_index_of((unsigned long)current_path[k]);
+            int di = bb_index_of((unsigned long)current_path[k + 1]);
+            if (si >= 0 && di >= 0) edge_rec[si][di] = 1;
+        }
         // }
         // clear
         // current_path_len = 0;
@@ -1010,6 +1027,22 @@ static void logbbstart(unsigned int cpu_index, void *udata) {
     // get pc vlue
     // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not accurate sometimes
     uint64_t pc = *(uint64_t *)udata;
+
+    // Edge/block coverage. udata points into bb_starts[], so the block index is free.
+    // Marked here -- before the watchdog early-return below -- so a runaway loop still
+    // contributes the coverage of the blocks it was executing, and marked
+    // unconditionally so an edge reached by a later-invalidated sample still counts as
+    // "executed" (edge_rec, the committed subset, is marked separately at record time).
+    int bb_idx = (int)((unsigned long *)udata - bb_starts);
+    if (bb_idx >= 0 && bb_idx < bb_count) {
+        bb_hit[bb_idx] = 1;
+        if (have_last_bb && last_bb_idx >= 0 && last_bb_idx < bb_count) {
+            edge_exec[last_bb_idx][bb_idx] = 1;
+        }
+        last_bb_idx = bb_idx;
+        have_last_bb = true;
+    }
+
     // Runaway-loop watchdog: a misclassified scalar loop bound (seeded with a
     // huge pointer-arena value) would loop here forever and overflow
     // current_path. Bail out and demote the offending field before that.
@@ -2215,6 +2248,12 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
     filename = get_arg("basicblocks", argc, argv);
     parse_basic_block_file(filename);
+
+    // edge.txt (CFG edge set for edge coverage). MUST come after basicblocks so
+    // bb_starts[] is populated. Optional: absent in sub-semantic mode (which does not
+    // register logbbstart), so guard against a NULL arg like other optional files.
+    filename = get_arg("edge", argc, argv);
+    if (filename) parse_edge_file(filename);
 
     filename = get_arg("function_starts", argc, argv);
     parse_function_start_file(filename);

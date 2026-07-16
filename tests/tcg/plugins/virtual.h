@@ -294,7 +294,7 @@ void parse_basic_block_file(const char *filename) {
     while (fgets(line, sizeof(line), fp)) {
         errno = 0;
         char *end;
-        uint64_t addr = strtoull(line, &end, 0);  // base 0 ⇒ handles “0x…”
+        uint64_t addr = strtoull(line, &end, 0);  // base 0 => handles "0x..."
         if (errno || end == line) {               // conversion failed
             fprintf(stderr, "Invalid address: %s", line);
             continue;
@@ -312,6 +312,132 @@ void parse_basic_block_file(const char *filename) {
     for (int i = 0; i < bb_count; i++) {
         printf("Basic Block %d starts at: 0x%lx\n", i, bb_starts[i]);
     }
+}
+
+// ---------------------------------------------------------------
+// edge coverage (function-level / e2e mode)
+// ---------------------------------------------------------------
+// Static CFG edge set, read from edge.txt (the denominator for edge coverage).
+// The runtime hit sets are dense bb-index matrices so logbbstart can mark an edge
+// with an O(1) array write. Two sets are tracked:
+//   edge_exec -- every executed transition, marked live in logbbstart (survives
+//                sample invalidation and the runaway-loop watchdog truncation).
+//   edge_rec  -- only transitions in committed/valid samples (marked from
+//                current_path at record time). The exec-minus-rec gap says an edge
+//                is reached but always discarded -> a seeding/invalidation problem,
+//                not something widening the fuzz range can fix.
+#define MAX_EDGES 4096
+unsigned long cfg_edge_src[MAX_EDGES];   // source bb start addr
+unsigned long cfg_edge_dst[MAX_EDGES];   // dest   bb start addr
+int edge_count = 0;
+
+uint8_t bb_hit[MAX_BASIC_BLOCKS];                          // executed blocks (by bb index)
+uint8_t edge_exec[MAX_BASIC_BLOCKS][MAX_BASIC_BLOCKS];     // executed edges  (by bb index)
+uint8_t edge_rec[MAX_BASIC_BLOCKS][MAX_BASIC_BLOCKS];      // recorded edges  (by bb index)
+int last_bb_idx = -1;                    // previous block's index within the run
+bool have_last_bb = false;               // reset at function entry (randargs)
+
+// Resolve a basic-block start address to its bb_starts[] index, or -1.
+int bb_index_of(unsigned long addr);
+int bb_index_of(unsigned long addr) {
+    for (int i = 0; i < bb_count; i++) {
+        if (bb_starts[i] == addr) return i;
+    }
+    return -1;
+}
+
+// Parse edge.txt: one "<src_hex>, <dst_hex>" per line. Must be called AFTER
+// parse_basic_block_file so bb_starts[] is populated (addresses are validated
+// against it at coverage-dump time).
+void parse_edge_file(const char *filename);
+void parse_edge_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Error opening edge file");
+        return;
+    }
+    // format: "0x..., 0x...", separated by newlines
+    char line[128];
+    while (fgets(line, sizeof(line), fp)) {
+        char *end;
+        errno = 0;
+        unsigned long src = strtoul(line, &end, 0);   // base 0 => handles "0x..."
+        if (errno || end == line) {
+            fprintf(stderr, "Invalid edge line: %s", line);
+            continue;
+        }
+        while (*end == ',' || *end == ' ' || *end == '\t') end++;  // skip separator
+        char *end2;
+        errno = 0;
+        unsigned long dst = strtoul(end, &end2, 0);
+        if (errno || end2 == end) {
+            fprintf(stderr, "Invalid edge line: %s", line);
+            continue;
+        }
+        if (edge_count < MAX_EDGES) {
+            cfg_edge_src[edge_count] = src;
+            cfg_edge_dst[edge_count] = dst;
+            edge_count++;
+        } else {
+            fprintf(stderr, "Max edges limit reached (%d), skipping rest\n", MAX_EDGES);
+            break;
+        }
+    }
+    fclose(fp);
+
+    for (int i = 0; i < edge_count; i++) {
+        printf("Edge %d: 0x%lx -> 0x%lx\n", i, cfg_edge_src[i], cfg_edge_dst[i]);
+    }
+}
+
+// Write coverage.json (blocks + edge exec/rec counts + uncovered-edge list) into the
+// dump dir. edge.txt is what makes the denominator and the uncovered list possible.
+void dump_edge_coverage(const char *dump_dir);
+void dump_edge_coverage(const char *dump_dir) {
+    char path[1200];
+    snprintf(path, sizeof(path), "%s/coverage.json", dump_dir);
+    FILE *fp = fopen(path, "w");
+    if (!fp) {
+        perror("Error opening coverage.json");
+        return;
+    }
+
+    int nbb_hit = 0;
+    for (int i = 0; i < bb_count; i++) if (bb_hit[i]) nbb_hit++;
+
+    int ne_exec = 0, ne_rec = 0;
+    for (int e = 0; e < edge_count; e++) {
+        int si = bb_index_of(cfg_edge_src[e]);
+        int di = bb_index_of(cfg_edge_dst[e]);
+        if (si >= 0 && di >= 0) {
+            if (edge_exec[si][di]) ne_exec++;
+            if (edge_rec[si][di])  ne_rec++;
+        }
+    }
+
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"blocks_total\": %d,\n", bb_count);
+    fprintf(fp, "  \"blocks_hit\": %d,\n", nbb_hit);
+    fprintf(fp, "  \"edges_total\": %d,\n", edge_count);
+    fprintf(fp, "  \"edges_executed\": %d,\n", ne_exec);
+    fprintf(fp, "  \"edges_recorded\": %d,\n", ne_rec);
+    fprintf(fp, "  \"uncovered_edges\": [");
+    int first = 1;
+    for (int e = 0; e < edge_count; e++) {
+        int si = bb_index_of(cfg_edge_src[e]);
+        int di = bb_index_of(cfg_edge_dst[e]);
+        int ex = (si >= 0 && di >= 0) ? edge_exec[si][di] : 0;
+        if (!ex) {
+            fprintf(fp, "%s\"0x%lx -> 0x%lx\"", first ? "" : ", ",
+                    cfg_edge_src[e], cfg_edge_dst[e]);
+            first = 0;
+        }
+    }
+    fprintf(fp, "]\n}\n");
+    fclose(fp);
+
+    printf("[VI coverage] blocks %d/%d, edges executed %d/%d, recorded %d/%d -> %s\n",
+           nbb_hit, bb_count, ne_exec, edge_count, ne_rec, edge_count, path);
 }
 
 // function start
