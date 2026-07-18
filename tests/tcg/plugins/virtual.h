@@ -4,6 +4,8 @@
 #include <qemu-plugin.h>
 #include "path_logger.h"
 #include "file_util.h"
+#include "rand_util.h"
+#include "coverage.h"
 #include <sys/time.h>
 
 // ---------------------------------------------------------------
@@ -314,9 +316,7 @@ void parse_basic_block_file(const char *filename) {
     }
 }
 
-// ---------------------------------------------------------------
 // edge coverage (function-level / e2e mode)
-// ---------------------------------------------------------------
 // Static CFG edge set, read from edge.txt (the denominator for edge coverage).
 // The runtime hit sets are dense bb-index matrices so logbbstart can mark an edge
 // with an O(1) array write. Two sets are tracked:
@@ -594,6 +594,10 @@ bool sub_semantic_reached = false;
 // function reach timestamp
 unsigned long long function_reach_time = 0;
 unsigned long long sub_semantic_reach_time = 0;
+// One-time start of e2e data collection (function_reach_time is reset every iteration).
+// Used to bound how long the dump waits on a rare path before emitting all paths.
+unsigned long long dump_start_time = 0;
+#define DUMP_BUDGET_MS 2500
 
 // static void raiseirq(unsigned int cpu_index, void *udata);
 // static void updatepc(unsigned int cpu_index, void *udata);
@@ -1132,7 +1136,19 @@ int check_path_log_size_and_dump(char* dump_dir) {
     //     }
     // }
     // if (num_path_log_ready && (num_path_log_ready == total_paths)) {
-    if (is_path_log_ready_for_dump(arg_count)) {
+    // Dump when every path is saturated (ideal), OR after DUMP_BUDGET_MS with >=1 path
+    // discovered. The budget stops a rare path (e.g. a fuzz-discovered branch that needs
+    // a rare input conjunction) from stalling the dump forever by never reaching
+    // MAX_PER_PATH_LOG_SIZE: every discovered path is written with whatever samples it
+    // has, and the fine-grained analysis recovers each from its concrete trigger (one
+    // input suffices), so a path with < MAX_PER_PATH_LOG_SIZE samples is still usable.
+    bool ready = is_path_log_ready_for_dump(arg_count);
+    bool budget_dump = false;
+    if (!ready && dump_start_time != 0) {
+        unsigned long long elapsed = current_timestamp_ms() - dump_start_time;
+        budget_dump = (elapsed >= DUMP_BUDGET_MS) && (HASH_COUNT(g_map) > 0);
+    }
+    if (ready || budget_dump) {
         // dump all path logs
         int path_id = 0;
         HASH_ITER(hh, g_map, e, tmp) {

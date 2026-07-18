@@ -91,46 +91,6 @@ int randargs_visit_counter = 0, logrets_visit_counter = 0;
 // --------------------------------------------------------------------------------------
 // randargs
 // --------------------------------------------------------------------------------------
-unsigned char get_random_byte(void);
-unsigned char get_random_byte(void) {
-	//This will make things linux specific, but lot of hardcoded things.
-    FILE *fp = fopen("/dev/urandom", "rb");
-    if (!fp) {
-        perror("fopen /dev/urandom");
-        exit(EXIT_FAILURE);
-    }
-
-    unsigned char byte;
-    size_t result = fread(&byte, 1, 1, fp);
-    fclose(fp);
-
-    if (result != 1) {
-        fprintf(stderr, "Failed to read from /dev/urandom\n");
-        exit(EXIT_FAILURE);
-    }
-
-    return byte;
-}
-uint32_t get_random_word(void);
-uint32_t get_random_word(void) {
-    //This will make things linux specific, but lot of hardcoded things.
-    FILE *fp = fopen("/dev/urandom", "rb");
-    if (!fp) {
-        perror("fopen /dev/urandom");
-        exit(EXIT_FAILURE);
-    }
-
-    uint32_t word;
-    size_t result = fread(&word, sizeof(uint32_t), 1, fp);
-    fclose(fp);
-
-    if (result != 1) {
-        fprintf(stderr, "Failed to read from /dev/urandom\n");
-        exit(EXIT_FAILURE);
-    }
-
-    return word;
-}
 
 // unsigned long long* parse_addresses(const char *input, size_t *count);
 // unsigned long long* parse_addresses(const char *input, size_t *count) {
@@ -200,19 +160,6 @@ uint32_t get_random_word(void) {
 
 // }
 
-float get_random_float(float min, float max);
-float get_random_float(float min, float max) {
-    // Generate a random float in the range [min, max]
-    unsigned int random_word = get_random_word();
-    return min + (random_word / (float)UINT32_MAX) * (max - min);
-}
-
-double get_random_double(double min, double max);
-double get_random_double(double min, double max) {
-    // Generate a random double in the range [min, max]
-    unsigned int random_word = get_random_word();
-    return (double)(((float)min + (random_word / (float)UINT32_MAX) * ((float)max - (float)min)));
-}
 
 static int cur_iteration = 0;
 #define MAX_FUZZ_ITERATIONS 10000000
@@ -224,6 +171,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
     function_reached = true;
     function_reach_time = current_timestamp_ms();
+    if (dump_start_time == 0) dump_start_time = function_reach_time;  // one-time (for dump budget)
 
     // New run starts here (randargs fires at func_start on every run, including the
     // invalidation/PC-reset retry). Reset the edge tracker so the restart cannot
@@ -372,8 +320,15 @@ static void randargs(unsigned int cpu_index, void *udata) {
                 value.f = setting->value_range[0].f;
             }
             else if (setting->value_count == 2) {
-                // Generate a random float in the range
-                value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
+                // Coverage-guided fuzzing (DESIGN.md Phase 1): occasionally seed a
+                // special/boundary value (NaN/Inf/0/+-FLT_MAX/...) so isnan/isinf and
+                // threshold guards get exercised; otherwise a uniform [lo,hi] sample.
+                float sv;
+                if (coverage_pick_special_float(&sv)) {
+                    value.f = sv;
+                } else {
+                    value.f = get_random_float(setting->value_range[0].f, setting->value_range[1].f);
+                }
             } else {
                 fprintf(stderr, "[VI randargs] Invalid value count for float type in setting '%s'\n", setting->name);
                 perror("randargs");
