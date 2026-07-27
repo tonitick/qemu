@@ -29,9 +29,13 @@ bool coverage_special_fuzz = true;
 // ~1 in COVERAGE_SPECIAL_ODDS float samples becomes a special value.
 #define COVERAGE_SPECIAL_ODDS 12
 
+// static const float coverage_special_floats[] = {
+//     0.0f, FLT_EPSILON, -FLT_EPSILON, 1.0f, -1.0f,
+//     FLT_MAX, -FLT_MAX, INFINITY, -INFINITY, NAN,
+// };
+
 static const float coverage_special_floats[] = {
-    0.0f, FLT_EPSILON, -FLT_EPSILON, 1.0f, -1.0f,
-    FLT_MAX, -FLT_MAX, INFINITY, -INFINITY, NAN,
+    0.0f, FLT_EPSILON, -FLT_EPSILON, 1.0f, -1.0f, NAN,
 };
 
 // With ~1/COVERAGE_SPECIAL_ODDS probability, set *out to a random special value and

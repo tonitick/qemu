@@ -2255,6 +2255,23 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
         printf("Stage number set to: %zu\n", stage_num);
     }
 
+    // Phase-2 (coverage-guided range widening): override the ranges used for DISCOVERED
+    // fields so the outer loop can progressively widen them. Format "lo:hi" (colon, NOT
+    // comma -- QEMU splits the --plugin argument on commas). Absent -> compiled-in
+    // defaults ({0,3} int, {0.5,5} float) are kept.
+    const char* int_range_str = get_arg("int_range", argc, argv);
+    if (int_range_str && sscanf(int_range_str, "%d:%d", &default_int_range[0], &default_int_range[1]) == 2) {
+        printf("[VI] default_int_range override: [%d, %d]\n", default_int_range[0], default_int_range[1]);
+    }
+    const char* demote_range_str = get_arg("demote_range", argc, argv);
+    if (demote_range_str && sscanf(demote_range_str, "%d:%d", &demote_int_range[0], &demote_int_range[1]) == 2) {
+        printf("[VI] demote_int_range override: [%d, %d]\n", demote_int_range[0], demote_int_range[1]);
+    }
+    const char* float_range_str = get_arg("float_range", argc, argv);
+    if (float_range_str && sscanf(float_range_str, "%f:%f", &default_float_range[0], &default_float_range[1]) == 2) {
+        printf("[VI] default_float_range override: [%g, %g]\n", default_float_range[0], default_float_range[1]);
+    }
+
 	// qemu_plugin_unimp_export_device((void *)&importer);
     qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
     qemu_plugin_register_atexit_cb(id, plugin_exit, NULL);

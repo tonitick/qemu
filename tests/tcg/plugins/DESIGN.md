@@ -1,6 +1,98 @@
 # Coverage-based Fuzzing
 
-Status: **draft / proposal** (not implemented)
+Status: **implemented** — Phase 0 & 1 complete, Phase 2 complete *with deviations*,
+Phase 3 partial, Phase 4 not started. The proposal below is kept verbatim as the
+rationale; the section immediately following records where the shipped code differs.
+
+## Implementation status (2026-07)
+
+### Phase 0 — coverage measurement (online in plugin): **DONE**
+
+- Static `edge.txt`: `binja_scripts/bn_utils.py::get_func_edges` +
+  `pre_analysis_single_func_non_struct.py` (writes `edge.txt` beside `bb.txt`).
+- Plugin: `parse_edge_file`, `bb_index_of`, `dump_edge_coverage` live in **`virtual.h`**
+  (not a separate file); the `bb_hit` / `edge_exec` / `edge_rec` bitmaps are in
+  `virtual.h`; the special-value table + injector are in `coverage.h`.
+- `logbbstart` marks `bb_hit`/`edge_exec` **before** the watchdog return
+  (`virtual.c:~993`); `have_last_bb` is reset in `randargs` (`virtual.c:179`); the
+  recorded set `edge_rec` is marked from `current_path[]` for committed samples only
+  (`virtual.c:~214`).
+- `coverage.json` emits `blocks_hit/blocks_total/edges_executed/edges_recorded/
+  uncovered_edges`; `run_data_collection.sh` passes `,edge=${ws_dir}/edge.txt`.
+- Both coverage sets are tracked as designed, **but** the Phase-2 loop currently keys
+  only on the executed side (`uncovered_edges`). The executed-vs-recorded gap is
+  emitted but not yet used to gate widening (a planned refinement).
+- Widening is driven by **edge** coverage only. That is sufficient (full edge coverage
+  implies full block coverage: entry is always hit, every other block has an incoming
+  edge) and strictly stronger than block-driven; block coverage is measured but not a
+  separate gate. A branchless (0-edge) function trivially reports "full" at round 1.
+
+### Phase 1 — special-value injection: **DONE, table trimmed**
+
+- `randargs` injects a special value ~1/`COVERAGE_SPECIAL_ODDS` (12) of the time via
+  `coverage_pick_special_float` (`coverage.h`), gated by `coverage_special_fuzz`.
+- **Deviation:** the table is `{0, ±FLT_EPSILON, ±1, NaN}` — `±FLT_MAX`, `±Inf`, and
+  `lo/hi` were **removed** from the proposal's set. Rationale: extreme finite values
+  (`±FLT_MAX`) propagate through *computed* thresholds and yield **fake coverage** — an
+  edge counted as hit via a garbage magnitude rather than a genuine input regime — which
+  then feeds ill-conditioned samples into recovery.
+- **Consequence:** the `abs(x) > FLT_MAX` / `isinf` magnitude-guard edges the proposal
+  planned to close with `±Inf` are no longer reachable (NaN still trips the
+  unordered-compare guards, but not the magnitude ones). `update_all` reaches **14/16**
+  edges, not the proposal's 16/16 target (§Validation).
+
+### Phase 2 — expansion loop: **DONE** (Python-driven `phase2_coverage_fuzz.py`), deviations + additions
+
+Deviations from the pseudocode:
+- **No patience counter.** Widen geometrically (×4) to a hard `CAP_SCALE` (`1<<24`);
+  exit early only on *full* edge coverage. Coverage plateaus for several rounds then
+  jumps once a product-of-fields threshold unlocks, so patience quits before the unlock.
+- **Keep the WIDEST samples, not the narrowest.** The proposal (Phase 2/3) said keep the
+  clean narrow-range data. The code does the opposite: for a path seen in several rounds
+  it keeps the widest-range samples (better-conditioned for SR), guarded by the per-path
+  log size (replace only when the new round filled the 100-sample log). This is a
+  deliberate reversal — see the open tension noted under Phase 3.
+- Ranges reach the collector as a **positional arg** (6th arg of
+  `run_data_collection.sh`), not env vars; the loop stays a Python process-per-round
+  (the in-plugin online variant remains just a note).
+
+Additions beyond the proposal (all in `phase2_coverage_fuzz.py`):
+- **Cross-round path accumulation** into a content-addressed store keyed by
+  `sha1(bb_seq)` — the block sequence is the stable path identity, since `path_id_N` is
+  unstable discovery order — merged back with deterministic numbering and
+  `path_provenance.json` (per path: first-seen vs sampled run, 3-axis ranges, observed
+  trigger ranges, concrete witness).
+- **Calling-interface union** across rounds (`merge_interface` / `arg_identity`) so a
+  field discovered only in some rounds isn't lost when the last round's
+  `calling_interface_input.json` overwrites the file.
+- **Consistency guard** (`check_path_interface_consistency`) that aborts if a path log's
+  argN naming diverges from the merged interface — fires on loop-over-buffer functions
+  whose field-discovery order is run-dependent.
+
+### Phase 3 — per-path focused recovery: **PARTIAL**
+
+- DONE: `pysr_script/run_pysr.py` drops non-finite / out-of-range rows (`ABS_LIMIT=1e18`)
+  so polluted wide-range samples don't raise the loss.
+- NOT DONE: focused per-path re-collection in the narrowest well-conditioned range,
+  minimum valid-sample enforcement, and AFL-style mutation around the concrete trigger
+  inputs. **Open tension:** Phase 2's "keep widest" choice conflicts with this phase's
+  "recover from clean narrow data" intent; not yet reconciled.
+
+### Phase 4 — static assist: **NOT started**
+
+Uncovered-branch back-slicing / directed seeding is unimplemented. Loop termination
+relies on the magnitude cap, not Phase-4 feasibility analysis.
+
+### Known gap — loop functions
+
+Buffer-loop functions (RunningAverage `get*InBuffer` / `*Last`) explode into hundreds of
+per-iteration paths. Edge coverage stays bounded (as the design predicts), but the
+per-path multistage recovery cannot process that many paths in reasonable time — not
+addressed.
+
+---
+
+*(original proposal follows)*
 
 ## Problem
 
@@ -369,6 +461,13 @@ formula to a constant-returning error handler.
 
 If that holds, generalize; the coverage numbers make the win measurable rather than
 anecdotal.
+
+> **Actual (2026-07):** `update_all` reaches **14/16** edges — not 16/16. The two
+> still-uncovered edges are the `abs(x) > FLT_MAX` magnitude guards, which the proposal
+> planned to close with `±Inf`; those were removed from the special-value table
+> (§Phase 1 above), so they are no longer reachable. NaN (still in the table) closes the
+> unordered-compare guard edges. Fine-grained recovery on the covered paths: 68 stage
+> outputs EXACT, returned value EXACT on all 3 paths.
 
 ## Prior art / framing
 
