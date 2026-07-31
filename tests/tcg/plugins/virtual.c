@@ -28,8 +28,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 char dump_path[256] = "collected_data";
 int default_int_range[2] = {0, 3};
-float default_float_range[2] = {0.5, 5.0};
-double default_double_range[2] = {0.5, 5.0};
+float default_float_range[2] = {-5.0, 5.0};
+double default_double_range[2] = {-5.0, 5.0};
 
 /*
  * Non-termination watchdogs (runaway loop + fault-spin).
