@@ -595,8 +595,10 @@ bool sub_semantic_reached = false;
 unsigned long long function_reach_time = 0;
 unsigned long long sub_semantic_reach_time = 0;
 // One-time start of e2e data collection (function_reach_time is reset every iteration).
-// Used to bound how long the dump waits on a rare path before emitting all paths.
-unsigned long long dump_start_time = 0;
+// Used to bound how long the dump waits on a rare path before emitting all paths, and to
+// report the TRUE total collection time (the *_reach_time vars are per-iteration).
+unsigned long long fuzz_start_time = 0;
+unsigned long long sub_semantic_fuzz_start_time = 0;
 #define DUMP_BUDGET_MS 2500
 
 // static void raiseirq(unsigned int cpu_index, void *udata);
@@ -1144,8 +1146,8 @@ int check_path_log_size_and_dump(char* dump_dir) {
     // input suffices), so a path with < MAX_PER_PATH_LOG_SIZE samples is still usable.
     bool ready = is_path_log_ready_for_dump(arg_count);
     bool budget_dump = false;
-    if (!ready && dump_start_time != 0) {
-        unsigned long long elapsed = current_timestamp_ms() - dump_start_time;
+    if (!ready && fuzz_start_time != 0) {
+        unsigned long long elapsed = current_timestamp_ms() - fuzz_start_time;
         budget_dump = (elapsed >= DUMP_BUDGET_MS) && (HASH_COUNT(g_map) > 0);
     }
     if (ready || budget_dump) {

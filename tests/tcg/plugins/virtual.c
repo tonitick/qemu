@@ -171,7 +171,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
 
     function_reached = true;
     function_reach_time = current_timestamp_ms();
-    if (dump_start_time == 0) dump_start_time = function_reach_time;  // one-time (for dump budget)
+    if (fuzz_start_time == 0) fuzz_start_time = function_reach_time;  // one-time collection start (dump budget + total fuzzing time)
 
     // New run starts here (randargs fires at func_start on every run, including the
     // invalidation/PC-reset retry). Reset the edge tracker so the restart cannot
@@ -185,7 +185,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
         dump_existing_path_logs(dump_path);
         dump_edge_coverage(dump_path);
         unsigned long long fuzzing_end_time = current_timestamp_ms();
-        printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - function_reach_time) / 1000.0);
+        printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - fuzz_start_time) / 1000.0);
         exit(0);
     }
     if (check_path_log_size_and_dump(dump_path)) {
@@ -193,7 +193,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
         // print_all_path_logs();
         dump_edge_coverage(dump_path);
         unsigned long long fuzzing_end_time = current_timestamp_ms();
-        printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - function_reach_time) / 1000.0);
+        printf("[VI randargs] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - fuzz_start_time) / 1000.0);
         exit(0);
     }
     if (cur_iteration == 0) {
@@ -555,6 +555,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
 
     sub_semantic_reached = true;
     sub_semantic_reach_time = current_timestamp_ms();
+    if (sub_semantic_fuzz_start_time == 0) sub_semantic_fuzz_start_time = sub_semantic_reach_time;  // one-time (true total)
 
     if (sub_semantic_cur_iteration >= MAX_FUZZ_ITERATIONS) {
         printf("[VI randargs_sub_semantics] reached max fuzzing iterations %d, dump existing path logs and exiting\n", MAX_FUZZ_ITERATIONS);
@@ -563,7 +564,7 @@ static void randargs_sub_semantics(unsigned int cpu_index, void *udata) {
     if (check_sub_semantic_log_size_and_dump(dump_path)) {
         printf("[VI randargs_sub_semantics] log finished, dump related path logs\n");
         unsigned long long fuzzing_end_time = current_timestamp_ms();
-        printf("[VI randargs_sub_semantics] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - sub_semantic_reach_time) / 1000.0);
+        printf("[VI randargs_sub_semantics] total fuzzing time: %f sec\n", (double)(fuzzing_end_time - sub_semantic_fuzz_start_time) / 1000.0);
         exit(0);
     }
     if (sub_semantic_cur_iteration == 0) {
