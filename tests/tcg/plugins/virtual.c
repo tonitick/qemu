@@ -1229,8 +1229,57 @@ static void update_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_meminfo_
                 }
             }
             else {
-                fprintf(stderr, "[MEMCB update_addr_var_mem_cb] Unsupported memory access at address 0x%lx\n", vaddr);
-                exit(EXIT_FAILURE);
+                /*
+                 * An access that matches no arg setting and no arena block used to be
+                 * fatal. That is backwards: it is EVIDENCE, not a dead end. The usual
+                 * cause is an IS_PTR_UNKNOWN argument that is really a small integer --
+                 * an index or a loop bound -- which was seeded with an arena address and
+                 * then used as a subscript, so the callee reads far outside every block.
+                 *
+                 * The age-based rule below (NON_PTR_ITER_MAX) already knows how to demote
+                 * such an argument, but it needs ~50 clean iterations to get there and a
+                 * wild subscript faults on the FIRST one, so it never fires. Measured on
+                 * autoware: every target taking (const Trajectory &, size_t idx, ...)
+                 * died here with 0 paths collected.
+                 *
+                 * So demote one unknown argument now, throw away the logs collected under
+                 * the wrong assumption, and restart the invocation from the function entry
+                 * -- the same recovery the stack-variable path above already performs.
+                 * Each demotion permanently fixes one argument, so this can happen at most
+                 * arg_count times before the loop below finds no candidate and we give up
+                 * for real.
+                 */
+                ArgSetting *demote = NULL;
+                for (size_t di = 0; di < arg_count; di++) {
+                    ArgSetting *cand = &arg_settings[di];
+                    if (cand->vtype == TYPE_UINT32 && cand->is_pointer == IS_PTR_UNKNOWN) {
+                        demote = cand;
+                        break;
+                    }
+                }
+
+                if (demote == NULL) {
+                    fprintf(stderr, "[MEMCB update_addr_var_mem_cb] Unsupported memory access at address 0x%lx"
+                                    " and no unknown pointer arg left to demote\n", vaddr);
+                    exit(EXIT_FAILURE);
+                }
+
+                printf("[MEMCB update_addr_var_mem_cb] out-of-arena access at 0x%lx -- demoting unknown"
+                       " pointer arg '%s' to a small integer and restarting the invocation\n",
+                       vaddr, demote->name);
+                demote->is_pointer = IS_PTR_FALSE;
+                demote->vtype = TYPE_UINT32;
+                demote->value_count = 2;
+                demote->value_range[0].u32 = default_int_range[0];
+                demote->value_range[1].u32 = default_int_range[1];
+
+                clear_all_path_logs();
+                is_logging_valid = false;
+
+                ValueUnion restart_pc;
+                restart_pc.u32 = func_start;
+                qemu_plugin_set_register((uint8_t *)&restart_pc, ARM_V7M_REG_R15);
+                qemu_plugin_vcpu_exit_tb_now();
             }
         }
     }
