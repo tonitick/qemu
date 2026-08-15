@@ -232,7 +232,30 @@ RetValueLogs   retlog_subsem[MAX_ARGS]; // outputs
 //   1 if all sub-semantic log size reach MAX_PER_PATH_LOG_SIZE, otherwise 0
 int is_sub_semantic_log_ready_for_dump(size_t acount);
 int is_sub_semantic_log_ready_for_dump(size_t acount) {
-    if (acount == 0) return 0; // if no input variable, return 0
+    // A stage with NO inputs is not a stage with nothing to record: its output can only
+    // be a CONSTANT, and that constant is still observed and logged. The stage splitter
+    // routinely produces these -- an isolated `vmov.f32 sN,#imm` carrying a powf exponent
+    // between two call boundaries becomes a stage of its own.
+    //
+    // Returning 0 here used to mean no in_outs.txt was written at all, so
+    // run_pysr_sub_semantic.py raised FileNotFoundError before reaching its own
+    // "no inputs -> record the constant" branch, and the downstream
+    // `powf(arg1=..., arg2=y_sN_k)` referenced a variable that was never defined --
+    // which invalidates the ENTIRE function's composition, not just that stage.
+    // Measured on the -O2 synthetic sweep: 171/6676 stages, poisoning ~50% of failures.
+    //
+    // Gate on the RET logs instead when there are no args. dump_io_pairs_from_sub_semantic
+    // _log_to_txt loops args then rets, so with acount == 0 it emits an in_outs.txt
+    // containing only [OUT] lines -- exactly what the constant branch expects.
+    if (acount == 0) {
+        if (ret_count == 0) return 0; // genuinely nothing to record
+        for (size_t i = 0; i < ret_count; ++i) {
+            if (retlog_subsem[i].count < MAX_PER_PATH_LOG_SIZE) {
+                return 0;
+            }
+        }
+        return 1;
+    }
     for (size_t i = 0; i < acount; ++i) {
         if (arglog_subsem[i].count < MAX_PER_PATH_LOG_SIZE) {
             return 0;
