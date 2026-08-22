@@ -813,7 +813,7 @@ int dump_io_pairs_from_path_log_entry_to_txt(PathLogEntry *e, const char *output
             fprintf(f, "[IN] %s: ", arg_settings[i].name);
             for (size_t j = 0; j < e->args[i].count; ++j) {
                 printf("       %g\n", e->args[i].data[j].f);
-                fprintf(f, "%.10f ", e->args[i].data[j].f);
+                fprintf(f, "%.9g ", e->args[i].data[j].f);
             }
             fprintf(f, "\n");
         }
@@ -834,7 +834,7 @@ int dump_io_pairs_from_path_log_entry_to_txt(PathLogEntry *e, const char *output
             fprintf(f, "[OUT] %s: ", ret_settings[i].name);
             for (size_t j = 0; j < e->rets[i].count; ++j) {
                 printf("       %g\n", e->rets[i].data[j].f);
-                fprintf(f, "%.10f ", e->rets[i].data[j].f);
+                fprintf(f, "%.9g ", e->rets[i].data[j].f);
             }
             fprintf(f, "\n");
         }
@@ -881,7 +881,7 @@ void dump_io_pairs_from_sub_semantic_log_to_txt(ArgValueLogs* arglogs, RetValueL
             fprintf(f, "[IN] %s: ", asettings[i].name);
             for (size_t j = 0; j < arglogs[i].count; ++j) {
                 printf("       %g\n", arglogs[i].data[j].f);
-                fprintf(f, "%.10f ", arglogs[i].data[j].f);
+                fprintf(f, "%.9g ", arglogs[i].data[j].f);
             }
             fprintf(f, "\n");
         }
@@ -902,7 +902,7 @@ void dump_io_pairs_from_sub_semantic_log_to_txt(ArgValueLogs* arglogs, RetValueL
             fprintf(f, "[OUT %lu] %s: ", rsettings[i].written_time, rsettings[i].name); // add last written time to variable name
             for (size_t j = 0; j < retlogs[i].count; ++j) {
                 printf("       %g\n", retlogs[i].data[j].f);
-                fprintf(f, "%.10f ", retlogs[i].data[j].f);
+                fprintf(f, "%.9g ", retlogs[i].data[j].f);
             }
             fprintf(f, "\n");
         }
