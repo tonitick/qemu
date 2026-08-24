@@ -1919,6 +1919,81 @@ static void update_subsem_addr_var_mem_cb(unsigned int vcpu_index, qemu_plugin_m
 
 
 // static int init = 0;
+// How far ahead of a vldr to look for the conversion that reveals its true type.
+// getCoefficientOfVariation's pair is 2 instructions apart (an unrelated `vldr s4`
+// sits between them), so a next-instruction check would miss it.
+#define INT_CVT_LOOKAHEAD 8
+
+// True when a floating-point LOAD actually reads an INTEGER.
+//
+// `vldr sN, [base, #off]` normally means the memory holds a float, and that is how the
+// address gets typed and seeded. But a compiler may load an integer field straight into
+// an FPU register and convert it in place:
+//
+//     80003ce:  vldr          s2, [r4, #4]     <- _count, a uint32_t
+//     80003d2:  vldr          s4, [r4, #16]
+//     80003d6:  vcvt.f32.u32  s2, s2           <- reads those BITS as unsigned
+//
+// Typing that address float is not a small error. Seeding it with a float in [-5,5] puts
+// an IEEE-754 bit pattern in memory, and `vcvt.f32.u32` then reads ~1e9 out of it (every
+// small float's exponent bits land in that band). RunningAverage::getStandardDeviation
+// uses the same field as a loop trip count, so the loop never terminates: measured,
+// getCoefficientOfVariation dies on the instruction-budget watchdog having executed 0 of
+// its 1 basic blocks, and the watchdog cannot rescue it because its demotion path only
+// considers IS_PTR_UNKNOWN integers -- a float-typed field is never a candidate.
+//
+// The callee proves the right answer exists: reading the identical address with `ldr`,
+// the plugin types it uint32 with range [1,3] and recovers cleanly (20 outputs, 0 bad).
+//
+// The signal is local and rare. Scanned over every target binary, `vldr` feeding
+// `vcvt.f32.{u,s}32` occurs exactly 3 times -- this site, and twice inside
+// __kernel_rem_pio2f (libm, resolved from LIBM_SEMANTICS, never analysed as a target).
+// The ~45 other vcvt sites are the benign `ldr` -> `vmov` -> `vcvt` form, where the
+// memory is already read as an integer and typed correctly.
+static int fp_load_feeds_int_cvt(csh h, struct qemu_plugin_tb *tb,
+                                 size_t idx, size_t n_insns, const cs_insn *ld);
+static int fp_load_feeds_int_cvt(csh h, struct qemu_plugin_tb *tb,
+                                 size_t idx, size_t n_insns, const cs_insn *ld)
+{
+    // Loads only: for a store the register is the SOURCE, and a later conversion of it
+    // says nothing about the memory just written.
+    if (strncmp(ld->mnemonic, "vldr", 4) != 0) return 0;
+    if (!ld->detail || ld->detail->arm.op_count < 1) return 0;
+    if (ld->detail->arm.operands[0].type != ARM_OP_REG) return 0;
+    unsigned dst = ld->detail->arm.operands[0].reg;
+
+    for (size_t j = idx + 1; j < n_insns && j <= idx + INT_CVT_LOOKAHEAD; j++) {
+        struct qemu_plugin_insn *nx = qemu_plugin_tb_get_insn(tb, j);
+        if (!nx) break;
+        size_t len = qemu_plugin_insn_size(nx);
+        uint8_t buf[16];
+        if (len == 0 || len > sizeof buf) break;
+        if (qemu_plugin_insn_data(nx, buf, len) != len) break;
+        cs_insn *ci = NULL;
+        size_t cnt = cs_disasm(h, buf, len, qemu_plugin_insn_vaddr(nx), 1, &ci);
+        if (cnt == 0) break;
+
+        int verdict = -1;
+        const char *mn = ci[0].mnemonic;
+        int to_float_from_int =
+            (strstr(mn, ".f32.u32") || strstr(mn, ".f32.s32") ||
+             strstr(mn, ".f64.u32") || strstr(mn, ".f64.s32")) &&
+            strncmp(mn, "vcvt", 4) == 0;
+        if (to_float_from_int && ci[0].detail && ci[0].detail->arm.op_count >= 1) {
+            unsigned src = ci[0].detail->arm.operands[ci[0].detail->arm.op_count - 1].reg;
+            if (src == dst) verdict = 1;
+        }
+        if (verdict < 0 && ci[0].detail && ci[0].detail->arm.op_count >= 1 &&
+            ci[0].detail->arm.operands[0].type == ARM_OP_REG &&
+            ci[0].detail->arm.operands[0].reg == dst) {
+            verdict = 0;   // redefined before any conversion -- the load was a real float
+        }
+        cs_free(ci, cnt);
+        if (verdict >= 0) return verdict;
+    }
+    return 0;
+}
+
 static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 {
 	// if (runtime && !init) {
@@ -2077,7 +2152,13 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             if (cs_disasm_count > 0) {
                 // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
                 // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
-                if (arm_insn_is_fp_mem_access(csinsn)) {
+                if (arm_insn_is_fp_mem_access(csinsn) && fp_load_feeds_int_cvt(cshandle, tb, i, n, csinsn)) {
+                    // vldr of an INTEGER field (a vcvt.f32.{u,s}32 consumes it) -- route to
+                    // the integer path so the address is typed and seeded as uint32.
+                    printf("    [INSTALL mem] float LOAD @0x%08lx feeds vcvt.f32.{u,s}32 -> treating memory as INTEGER\n", csinsn[0].address);
+                    qemu_plugin_register_vcpu_mem_cb(insn, update_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
+                }
+                else if (arm_insn_is_fp_mem_access(csinsn)) {
                     printf("    [INSTALL mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
                     qemu_plugin_register_vcpu_mem_cb(insn, update_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
                     printf("    [INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
@@ -2114,7 +2195,11 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
                 if (cs_disasm_count > 0) {
                     // printf("[INSTALL disas] %s\t%s \n", csinsn[0].mnemonic, csinsn[0].op_str);
                     // printf("[INSTALL disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
-                    if (arm_insn_is_fp_mem_access(csinsn)) {
+                    if (arm_insn_is_fp_mem_access(csinsn) && fp_load_feeds_int_cvt(cshandle, tb, i, n, csinsn)) {
+                        printf("    [INSTALL subsem mem] float LOAD @0x%08lx feeds vcvt.f32.{u,s}32 -> treating memory as INTEGER\n", csinsn[0].address);
+                        qemu_plugin_register_vcpu_mem_cb(insn, update_subsem_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
+                    }
+                    else if (arm_insn_is_fp_mem_access(csinsn)) {
                         printf("    [INSTALL subsem mem] float instruction @0x%08lx accesses floating point memory\n", csinsn[0].address);
                         qemu_plugin_register_vcpu_mem_cb(insn, update_subsem_float_addr_var_mem_cb, QEMU_PLUGIN_CB_RW_REGS, QEMU_PLUGIN_MEM_RW, (void *)&instr_addrs[instr_idx]);
                         printf("    [INSTALL subsem disas] 0x%lx:\t%s\t%s \n", csinsn[0].address, csinsn[0].mnemonic, csinsn[0].op_str);
