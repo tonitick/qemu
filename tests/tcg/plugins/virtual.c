@@ -2390,6 +2390,13 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
         printf("Stage number set to: %zu\n", stage_num);
     }
 
+    // Special-value seeding (coverage.h) is on unless "special_fuzz=0" is passed.
+    const char* special_fuzz_str = get_arg("special_fuzz", argc, argv);
+    if (special_fuzz_str && strcmp(special_fuzz_str, "0") == 0) {
+        coverage_special_fuzz = false;
+        printf("[VI] special-value seeding disabled (special_fuzz=0)\n");
+    }
+
     // Phase-2 (coverage-guided range widening): override the ranges used for DISCOVERED
     // fields so the outer loop can progressively widen them. Format "lo:hi" (colon, NOT
     // comma -- QEMU splits the --plugin argument on commas). Absent -> compiled-in

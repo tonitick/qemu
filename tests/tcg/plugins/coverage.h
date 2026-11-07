@@ -23,7 +23,9 @@
 // path's output; downstream recovery drops non-finite output rows to stay clean
 // (DESIGN.md Phase 3).
 
-// Master switch for special-value injection (function-level / e2e only). Default on.
+// Master switch for special-value injection (function-level / e2e only). Default on;
+// the plugin argument `special_fuzz=0` turns it off (see qemu_plugin_install), leaving
+// only the uniform [lo, hi] samples -- e.g. to measure an ablation.
 bool coverage_special_fuzz = true;
 
 // ~1 in COVERAGE_SPECIAL_ODDS float samples becomes a special value.
