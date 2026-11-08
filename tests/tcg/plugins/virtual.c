@@ -163,6 +163,22 @@ int randargs_visit_counter = 0, logrets_visit_counter = 0;
 
 static int cur_iteration = 0;
 #define MAX_FUZZ_ITERATIONS 10000000
+
+// special_pass (coverage.h): the float input this iteration sets to special_pass_value,
+// i.e. the (iteration mod #float inputs)-th float/double setting, so successive
+// iterations rotate through them. NULL when the function has no float input.
+static ArgSetting *special_pass_target(int iteration) {
+    size_t n = 0;
+    for (size_t i = 0; i < arg_count; i++)
+        if (arg_settings[i].vtype == TYPE_FLOAT || arg_settings[i].vtype == TYPE_DOUBLE) n++;
+    if (n == 0) return NULL;
+    size_t k = (size_t)iteration % n;
+    for (size_t i = 0; i < arg_count; i++)
+        if ((arg_settings[i].vtype == TYPE_FLOAT || arg_settings[i].vtype == TYPE_DOUBLE) && k-- == 0)
+            return &arg_settings[i];
+    return NULL;
+}
+
 static void randargs(unsigned int cpu_index, void *udata) {
     // print pc for debugging
     // uint32_t pc = qemu_get_register_32(ARM_V7M_REG_R15); // this is not accurate sometimes
@@ -289,6 +305,7 @@ static void randargs(unsigned int cpu_index, void *udata) {
     is_logging_valid = true;
     cur_iteration++;
     printf("[VI randargs] iteration %d:\n", cur_iteration);
+    ArgSetting *special_target = special_pass ? special_pass_target(cur_iteration) : NULL;
     // iterate arg_settings
     for (size_t i = 0; i < arg_count; i++) {
         ArgSetting *setting = &arg_settings[i];
@@ -316,7 +333,10 @@ static void randargs(unsigned int cpu_index, void *udata) {
         // other types
         if (setting->vtype == TYPE_FLOAT) {
             // assert(setting->value_count == 2);
-            if (setting->value_count == 1) {
+            if (setting == special_target) {
+                value.f = (float)special_pass_value;
+            }
+            else if (setting->value_count == 1) {
                 value.f = setting->value_range[0].f;
             }
             else if (setting->value_count == 2) {
@@ -336,7 +356,10 @@ static void randargs(unsigned int cpu_index, void *udata) {
             }
         } else if (setting->vtype == TYPE_DOUBLE) {
             // assert(setting->value_count == 2);
-            if (setting->value_count == 1) {
+            if (setting == special_target) {
+                value.d = special_pass_value;
+            }
+            else if (setting->value_count == 1) {
                 value.d = setting->value_range[0].d;
             }
             else if (setting->value_count == 2) {
@@ -2395,6 +2418,19 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     if (special_fuzz_str && strcmp(special_fuzz_str, "0") == 0) {
         coverage_special_fuzz = false;
         printf("[VI] special-value seeding disabled (special_fuzz=0)\n");
+    }
+
+    // Targeted special-value pass (coverage.h): "special_pass=nan" (or inf, -inf).
+    const char* special_pass_str = get_arg("special_pass", argc, argv);
+    if (special_pass_str) {
+        char *end = NULL;
+        special_pass_value = strtod(special_pass_str, &end);
+        if (end == special_pass_str) {
+            fprintf(stderr, "[VI] invalid special_pass value '%s'\n", special_pass_str);
+            return -1;
+        }
+        special_pass = true;
+        printf("[VI] special-value pass: one float input per iteration set to %g\n", special_pass_value);
     }
 
     // Phase-2 (coverage-guided range widening): override the ranges used for DISCOVERED

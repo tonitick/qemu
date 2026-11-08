@@ -51,4 +51,15 @@ bool coverage_pick_special_float(float *out) {
     return true;
 }
 
+// ---------------------------------------------------------------
+// targeted special-value pass
+// ---------------------------------------------------------------
+// The occasional seeds above give a NaN-only path just the few samples that happen to
+// hit it. The plugin argument `special_pass=<value>` (nan, inf or -inf) instead sets ONE
+// float input per iteration to <value>, rotating through the float inputs (randargs), so
+// every sample shows what a special value in exactly that input does. Pair it with
+// `special_fuzz=0` so the other inputs stay ordinary.
+bool special_pass = false;
+double special_pass_value = 0.0;
+
 #endif // COVERAGE_H
